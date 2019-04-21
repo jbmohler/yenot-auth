@@ -1,0 +1,6 @@
+syntax: glob
+
+*.swp
+*.egg-info
+.pytest_cache
+__pycache__
