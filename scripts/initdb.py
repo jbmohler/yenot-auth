@@ -1,3 +1,5 @@
+import sys
+import re
 import bcrypt
 
 SYS_ADMIN_ROLE = ('System Administrator', 999)
@@ -36,21 +38,79 @@ SYS_ADMIN_ACTS = [\
         'api_roleactivities_by_roles',
         'put_api_roleactivities_by_roles']
 
-def load_essentials(conn):
-    with conn.cursor() as cursor:
-        ins = "insert into roles (role_name, sort) values (%s, %s)"
-        cursor.executemany(ins, [SYS_ADMIN_ROLE, USER_ROLE])
+import urllib.parse
+import psycopg2
+import psycopg2.extras
+import yenot.backend.api as api
 
+def create_connection(dburl):
+    result = urllib.parse.urlsplit(dburl)
+
+    dbname = result.path[1:]
+
+    kwargs = {'dbname': result.path[1:]}
+    if result.hostname != None:
+        kwargs['host'] = result.hostname
+    if result.port != None:
+        kwargs['port'] = result.port
+    if result.username != None:
+        kwargs['user'] = result.username
+    if result.password != None:
+        kwargs['password'] = result.password
+    kwargs['cursor_factory'] = psycopg2.extras.NamedTupleCursor
+
+    return psycopg2.connect(**kwargs)
+
+def register_activities(conn):
     import yenot.backend.api as api
     app = api.get_global_app()
 
     with conn.cursor() as cursor:
         ins = """
 insert into activities (act_name, description, url)
-values(%(n)s, %(d)s, %(u)s)"""
+values(%(n)s, %(d)s, %(u)s)
+on conflict (act_name) do nothing"""
         for ep in app.endpoints():
-            print(ep.name)
             cursor.execute(ins, {'n': ep.name, 'd': None, 'u': ep.url})
+
+def rolemap_activities(conn, routes, roles):
+    select_unroled = """
+select activities.*
+from activities
+join lateral (
+    select count(*) 
+    from roleactivities 
+    where activityid=activities.id) mapcount on true
+where mapcount.count=0
+"""
+
+    ins2 = """
+insert into roleactivities (roleid, activityid)
+values (
+    (select id from roles where role_name=%(rn)s),
+    (select id from activities where act_name=%(u)s))"""
+
+    rows = api.sql_rows(conn, select_unroled)
+
+    for row in rows:
+        for route, role in zip(routes, roles):
+            if None != re.search(route, row.act_name):
+                print('{} <= {}'.format(row.act_name, role))
+                api.sql_void(conn, ins2, {'rn': role, 'u': row.act_name})
+
+    rows = api.sql_rows(conn, select_unroled)
+    if len(rows) > 0:
+        print('** Registered end-points not associated to a role **')
+        for row in rows:
+            print(row.act_name)
+
+
+def load_essentials(conn):
+    with conn.cursor() as cursor:
+        ins = "insert into roles (role_name, sort) values (%s, %s)"
+        cursor.executemany(ins, [SYS_ADMIN_ROLE, USER_ROLE])
+
+    register_activities(conn)
 
     with conn.cursor() as cursor:
         ins = """

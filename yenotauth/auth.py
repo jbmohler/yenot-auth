@@ -137,15 +137,14 @@ def api_session():
     password = request.params.get('password', None)
     ip = request.environ.get('REMOTE_ADDR')
 
-    select = 'select id, username, pwhash, inactive from users where username=%s'
+    select = 'select id, username, pwhash, inactive from users where username=%(uname)s'
     sess_insert = """
 insert into sessions (id, userid, ipaddress, refreshed)
-values (%(sid)s, %(uid)s, %(ip)s, %(to)s);"""
+values (%(sid)s, %(uid)s, %(ip)s, current_timestamp);"""
 
+    results = api.Results()
     with app.dbconn() as conn:
-        cursor = conn.cursor()
-        cursor.execute(select, [username.upper()])
-        rows = cursor.fetchall()
+        rows = api.sql_rows(conn, select, {'uname': username.upper()})
 
         content = {}
 
@@ -167,17 +166,21 @@ values (%(sid)s, %(uid)s, %(ip)s, %(to)s);"""
             session = base64.b64encode(os.urandom(18)).decode('ascii') # 24 characters
             assert len(session) == 24
             content['session'] = session
-            cursor.execute(sess_insert, {'sid': session, 'uid': rows[0].id, 'ip': ip, 'to': datetime.datetime.utcnow()})
+            params = {
+                    'sid': session, 
+                    'uid': rows[0].id, 
+                    'ip': ip}
+            api.sql_void(conn, sess_insert, params)
             conn.commit()
 
             capabilities = api.sql_tab2(conn, CAPS_SELECT, {'sid': session})
 
             content['capabilities'] = capabilities
 
-        cursor.close()
+        results.keys.update(content)
 
     response.status = status
-    return utils.json_response(content)
+    return results.json_out()
 
 @app.post('/api/session-by-pin', name='api_session_by_pin', skip=['yenot-auth'])
 def api_session_by_pin():
@@ -333,16 +336,19 @@ def get_users():
     userrole = request.params.get('userrole', None)
 
     select = """
-select users.id, users.username, users.full_name, users.descr as description, users.inactive, 
+select users.id, users.username, users.full_name, 
+    users.descr as description, users.inactive, 
     loggedin.count, userroles2.rolenames as roles
 from users
 left outer join (select userid, count(*) from sessions where not inactive group by userid) as loggedin on loggedin.userid=users.id
 left outer join (
-                    select userid, string_agg(roles.role_name, '; ' order by role_name) as rolenames
-                    from userroles 
-                    join roles on roles.id=userroles.roleid
-                    group by userid) as userroles2 on userroles2.userid=users.id
-/*where*/
+    select 
+        userid, 
+        string_agg(roles.role_name, '; ' order by role_name) as rolenames
+    from userroles 
+    join roles on roles.id=userroles.roleid
+    group by userid) as userroles2 on userroles2.userid=users.id
+/*WHERE*/
 order by users.username
 """
 
@@ -355,18 +361,16 @@ order by users.username
         wheres.append('not users.inactive')
 
     if len(wheres) > 0:
-        select = select.replace('/*where*/', 'where ' + ' and '.join(wheres))
+        select = select.replace('/*WHERE*/', 'where ' + ' and '.join(wheres))
 
-    cm = {\
-            'id': {'type': 'yenot_user.surrogate'},
-            'username': {'type': 'yenot_user.name', 'url_key': 'id', 'represents': True},
-            'count': {'label': 'Active Sessions'}}
-
+    results = api.Results(default_title=True)
     with app.dbconn() as conn:
-        columns, rows = api.sql_tab2(conn, select, params, cm)
-
-    keys = {'headers': ['Users']}
-    return utils.json_response([keys, columns, rows])
+        cm = {\
+                'id': {'type': 'yenot_user.surrogate'},
+                'username': {'type': 'yenot_user.name', 'url_key': 'id', 'represents': True},
+                'count': {'label': 'Active Sessions'}}
+        results.tables['users', True] = api.sql_tab2(conn, select, params, cm)
+    return results.json_out()
 
 @app.get('/api/users/lastlogin', name='api_users_lastlogin', \
         report_title='User List by Last Login')
@@ -375,27 +379,26 @@ def get_users_lastlogin():
 select users.id, users.username, lastlog.ipaddress, lastlog.refreshed, active.count as active_count
 from users
 join lateral (
-	select sessions.ipaddress, sessions.refreshed
-	from sessions
-	where sessions.userid=users.id
-	order by refreshed desc
-	limit 1) lastlog on true
+    select sessions.ipaddress, sessions.refreshed
+    from sessions
+    where sessions.userid=users.id
+    order by refreshed desc
+    limit 1) lastlog on true
 left outer join lateral (
-	select count(*)
-	from sessions
-	where sessions.userid=users.id and not sessions.inactive) as active on true
+    select count(*)
+    from sessions
+    where sessions.userid=users.id and not sessions.inactive) as active on true
 order by users.username"""
 
-    cm = {\
-            'id': {'type': 'yenot_user.surrogate'},
-            'username': {'type': 'yenot_user.name', 'url_key': 'id', 'represents': True},
-            'active_count': {'label': 'Active Sessions'}}
-
+    results = api.Results(default_title=True)
     with app.dbconn() as conn:
-        columns, rows = api.sql_tab2(conn, select, column_map=cm)
+        cm = {\
+                'id': {'type': 'yenot_user.surrogate'},
+                'username': {'type': 'yenot_user.name', 'url_key': 'id', 'represents': True},
+                'active_count': {'label': 'Active Sessions'}}
 
-    keys = {'headers': ['User List by Last Login']}
-    return utils.json_response([keys, columns, rows])
+        results.tables['logins', True] = api.sql_tab2(conn, select, column_map=cm)
+    return results.json_out()
 
 def get_activities_by_role_prompts():
     return []
