@@ -18,5 +18,6 @@ def yenot_auth_data_init(conn, args):
             pw = getpass.getpass('Password for {}: '.format(args.user))
         initdb.create_yenot_user(conn, args.user, pw)
 
+
 api.add_server_init(yenot_auth_app_init)
 api.add_data_init(yenot_auth_data_init)

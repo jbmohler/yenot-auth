@@ -166,7 +166,7 @@ values (%(sid)s, %(uid)s, %(ip)s, current_timestamp);"""
 
         if status == 200:
             # generate and write session
-            session = base64.b64encode(os.urandom(18)).decode('ascii') # 24 characters
+            session = base64.b64encode(os.urandom(18)).decode('ascii')  # 24 characters
             assert len(session) == 24
             content['session'] = session
             params = {
@@ -223,7 +223,7 @@ values (%(sid)s, %(uid)s, %(ip)s, %(to)s, true, %(pin6)s);"""
 
         if status == 200:
             # generate and write session
-            session = base64.b64encode(os.urandom(18)).decode('ascii') # 24 characters
+            session = base64.b64encode(os.urandom(18)).decode('ascii')  # 24 characters
             assert len(session) == 24
             results.keys['session'] = session
             params = {
@@ -248,12 +248,12 @@ values (%(sid)s, %(uid)s, %(ip)s, %(to)s, true, %(pin6)s);"""
                 auth_token = app.config['twilio'].auth_token
                 src_phone = app.config['twilio'].src_phone
 
-                pin6s = ''.join(pin6[:3])+' '+''.join(pin6[3:])
+                pin6s = '{} {}'.format(''.join(pin6[:3]), ''.join(pin6[3:]))
                 client = Client(account_sid, auth_token)
                 client.messages.create(
-                            to = t2fa['sms'],
-                            from_ = src_phone,
-                            body = 'Your one-time PIN is {}'.format(pin6s))
+                            to=t2fa['sms'],
+                            from_=src_phone,
+                            body='Your one-time PIN is {}'.format(pin6s))
 
         cursor.close()
 
@@ -285,10 +285,9 @@ values (%(sid)s, %(uid)s, %(ip)s, %(to)s);"""
         else:
             status = 401
 
-
         if status == 200:
             # generate and write session
-            session = base64.b64encode(os.urandom(18)).decode('ascii') # 24 characters
+            session = base64.b64encode(os.urandom(18)).decode('ascii')  # 24 characters
             assert len(session) == 24
             results.keys['session'] = session
             api.sql_void(conn, sess_insert, {'sid': session, 'uid': sessrow.userid, 'ip': ip, 'to': datetime.datetime.utcnow()})
@@ -561,7 +560,7 @@ from activities
 def put_api_activities():
     activities = api.table_from_tab2('activities', amendments=['id'], required=['act_name', 'description'], allow_extra=True)
 
-    for row in coll.rows:
+    for row in activities.rows:
         if not hasattr(row, 'id'):
             row.id = uuid.uuid1().hex
 
@@ -716,7 +715,7 @@ where roles.id in (select roleid from roles_universe)"""
 
 @app.put('/api/userroles/by_roles', name='put_api_userroles_by_roles')
 def put_userroles_by_roles():
-    coll = api.table_from_tab2('userroles', required['id', 'role_list'])
+    coll = api.table_from_tab2('userroles', required=['id', 'role_list'])
     # comma delimited list of user ids
     roles = request.forms.get('roles').split(',')
     roles = list(roles)
@@ -769,7 +768,7 @@ def get_roleactivities_by_roles():
 
     select = """
 with roles_universe as (
-    select unnest(%(roles)s::uuid[]) as roleid
+	select unnest(%(roles)s::uuid[]) as roleid
 )
 select activities.id, activities.act_name, activities.description, 
 	(
@@ -786,7 +785,7 @@ from activities;
 
     select2 = """
 with roles_universe as (
-    select unnest(%(roles)s::uuid[]) as roleid
+	select unnest(%(roles)s::uuid[]) as roleid
 )
 select roles.id, roles.role_name, roles.sort
 from roles join roles_universe on roles_universe.roleid=roles.id"""

@@ -36,13 +36,10 @@ class YenotAuth:
 
     def apply(self, callback, route):
         def wrapper(*args, **kwargs):
-            no_auth = request.headers.get('X-Yenot-NoAuth', None)
-            relax_auth = no_auth != None and no_auth == wpsgsite.config['fido'].no_auth
-            if not relax_auth:
-                sid = request.headers.get('X-Yenot-SessionID', None)
-                if sid == None:
-                    raise HTTPError(401, 'Content forbidden (X-Yenot-SessionID header required)')
-                rname = route.name
-                self.checkauth(sid, rname)
+            sid = request.headers.get('X-Yenot-SessionID', None)
+            if sid == None:
+                raise HTTPError(401, 'Content forbidden (X-Yenot-SessionID header required)')
+            rname = route.name
+            self.checkauth(sid, rname)
             return callback(*args, **kwargs)
         return wrapper

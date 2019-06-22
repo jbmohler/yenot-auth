@@ -1,5 +1,9 @@
 import re
 import bcrypt
+import urllib.parse
+import psycopg2
+import psycopg2.extras
+import yenot.backend.api as api
 
 SYS_ADMIN_ROLE = ('System Administrator', 999)
 USER_ROLE = ('User', 1)
@@ -38,17 +42,12 @@ SYS_ADMIN_ACTS = [\
         'api_roleactivities_by_roles',
         'put_api_roleactivities_by_roles']
 
-import urllib.parse
-import psycopg2
-import psycopg2.extras
-import yenot.backend.api as api
-
 def create_connection(dburl):
     result = urllib.parse.urlsplit(dburl)
 
     dbname = result.path[1:]
 
-    kwargs = {'dbname': result.path[1:]}
+    kwargs = {'dbname': dbname}
     if result.hostname != None:
         kwargs['host'] = result.hostname
     if result.port != None:
