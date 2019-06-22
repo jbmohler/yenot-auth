@@ -1,8 +1,7 @@
-import os
 import sys
 import argparse
 import importlib
-import initdb
+import yenotauth.initdb as initdb
 
 if __name__ == '__main__':
     parse = argparse.ArgumentParser('initialize a yenot database')

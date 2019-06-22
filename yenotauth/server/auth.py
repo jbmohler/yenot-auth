@@ -1,4 +1,5 @@
 import os
+import json
 import uuid
 import datetime
 import random
@@ -75,8 +76,8 @@ from unnest(%(roles)s) rl"""
 
 @app.post('/api/user/me/change-password', name='api_user_me_change_password')
 def api_user_me_change_password():
-    oldpass = request.params.get('oldpass', None)
-    newpass = request.params.get('newpass', None)
+    oldpass = request.forms.get('oldpass')
+    newpass = request.forms.get('newpass')
 
     select = """
 select id, username, pwhash, inactive
@@ -104,8 +105,9 @@ update users set pwhash=%(h)s where id=%(i)s"""
 
 @app.post('/api/user/me/change-pin', name='api_user_me_change_pin')
 def api_user_me_change_pin():
-    oldpass = request.params.get('oldpass', None)
-    newpin = request.params.get('newpin', None)
+    oldpass = request.forms.get('oldpass')
+    newpin = request.forms.get('newpin')
+    t2fa = json.loads(request.forms.get('target_2fa'))
 
     select = """
 select id, username, pwhash, inactive
@@ -113,7 +115,7 @@ from users
 where id=(select userid from sessions where sessions.id=%(sid)s)"""
 
     update = """
-update users set pinhash=%(h)s where id=%(i)s"""
+update users set pinhash=%(h)s, target_2fa=%(fa)s where id=%(i)s"""
 
     with app.dbconn() as conn:
         user = api.sql_1object(conn, select, {'sid': request.headers['X-Yenot-SessionID']})
@@ -127,14 +129,15 @@ update users set pinhash=%(h)s where id=%(i)s"""
         hashed = bcrypt.hashpw(newpin.encode('utf8'), bcrypt.gensalt())
         hashed = hashed.decode('ascii')
 
-        api.sql_void(conn, update, {'h': hashed, 'i': user.id})
+        x = psycopg2.extras.Json(t2fa)
+        api.sql_void(conn, update, {'h': hashed, 'i': user.id, 'fa': x})
         conn.commit()
     return api.Results().json_out()
 
 @app.post('/api/session', name='api_session', skip=['yenot-auth'])
 def api_session():
-    username = request.params.get('username', None)
-    password = request.params.get('password', None)
+    username = request.forms.get('username')
+    password = request.forms.get('password')
     ip = request.environ.get('REMOTE_ADDR')
 
     select = 'select id, username, pwhash, inactive from users where username=%(uname)s'
@@ -238,17 +241,24 @@ values (%(sid)s, %(uid)s, %(ip)s, %(to)s, true, %(pin6)s);"""
                 with open('./opslogs/mypin-{}.txt'.format(codecs.encode(session.encode('ascii'), 'hex').decode('ascii')), 'w') as f:
                     f.write(''.join(pin6))
             if 'sms' in t2fa:
+                from twilio.rest import Client
+                # put your own credentials here
+
+                account_sid = app.config['twilio'].account_sid
+                auth_token = app.config['twilio'].auth_token
+                src_phone = app.config['twilio'].src_phone
+
                 pin6s = ''.join(pin6[:3])+' '+''.join(pin6[3:])
-                client = TwilioRestClient(ACCOUNT_SID, AUTH_TOKEN)
+                client = Client(account_sid, auth_token)
                 client.messages.create(
                             to = t2fa['sms'],
-                            from_ = '484-679-4873',
+                            from_ = src_phone,
                             body = 'Your one-time PIN is {}'.format(pin6s))
 
         cursor.close()
 
     response.status = status
-    return results.json_out(flat_dict=True)
+    return results.json_out()
 
 @app.post('/api/session/promote-2fa', name='api_session_promote_2fa', skip=['yenot-auth'])
 def api_session_promote_2fa():
@@ -290,7 +300,7 @@ values (%(sid)s, %(uid)s, %(ip)s, %(to)s);"""
             results.keys['capabilities'] = capabilities
 
     response.status = status
-    return results.json_out(flat_dict=True)
+    return results.json_out()
 
 @app.put('/api/session/logout', name='api_session_logout')
 def api_session_logout():

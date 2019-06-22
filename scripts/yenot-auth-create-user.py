@@ -1,7 +1,7 @@
 import sys
 import getpass
 import argparse
-import initdb
+import yenotauth.initdb as initdb
 
 password = getpass.getpass()
 conn = initdb.create_connection(sys.argv[1])

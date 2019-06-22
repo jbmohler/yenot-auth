@@ -1,4 +1,3 @@
-import sys
 import re
 import bcrypt
 
@@ -10,11 +9,12 @@ USER_ACTS = [\
         #'api_report_runmeta', 
         #'api_report_info',
         #'api_info',
+        'api_user_me_change_password',
+        'api_user_me_change_pin',
+        'api_endpoints',
         'api_session_logout']
 
 SYS_ADMIN_ACTS = [\
-        'api_user_me_change_password',
-        'api_user_me_change_pin',
         'api_session',
         'api_session_by_pin',
         'api_session_promote_2fa',
@@ -62,7 +62,6 @@ def create_connection(dburl):
     return psycopg2.connect(**kwargs)
 
 def register_activities(conn):
-    import yenot.backend.api as api
     app = api.get_global_app()
 
     with conn.cursor() as cursor:

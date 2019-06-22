@@ -2,8 +2,6 @@ import os
 import getpass
 import yenot.backend.api as api
 from . import core
-from . import auth
-from . import endpoints
 
 def yenot_auth_app_init(app):
     app.__class__.raise_unauthorized = core.raise_unauthorized
