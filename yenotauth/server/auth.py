@@ -675,7 +675,7 @@ delete from userroles where userroles.roleid=%(id)s and
 
 @app.get('/api/userroles/by_roles', name='api_userroles_by_roles')
 def get_userroles_by_roles():
-    # comma delimited list of user ids
+    # comma delimited list of role ids
     roles = request.params.get('roles').split(',')
     roles = list(roles)
 
@@ -716,17 +716,17 @@ where roles.id in (select roleid from roles_universe)"""
 @app.put('/api/userroles/by_roles', name='put_api_userroles_by_roles')
 def put_userroles_by_roles():
     coll = api.table_from_tab2('userroles', required=['id', 'role_list'])
-    # comma delimited list of user ids
+    # comma delimited list of role ids
     roles = request.forms.get('roles').split(',')
     roles = list(roles)
 
     insert = """
 -- insert role--user links for all roles in universe not yet linked to role.
 with roles_add as (
-    select * from (select unnest(%(roles)s) as roleid) as f
-    where f.roleid = any(%(tolink)s)
+    select f.roleid from (select unnest(%(roles)s::uuid[]) as roleid) as f
+    where f.roleid = any(%(tolink)s::uuid[])
 ), toinsert as (
-    select %(id)s, roles_add.roleid
+    select %(id)s::uuid, roles_add.roleid
     from roles_add
     left outer join userroles on userroles.userid=%(id)s and userroles.roleid=roles_add.roleid
     where userroles.roleid is null
@@ -735,12 +735,12 @@ insert into userroles (userid, roleid)
 (select * from toinsert)"""
 
     delete = """
--- insert role--user links for all users in universe not yet linked to role.
+-- insert role--user links for all roles in universe not yet linked to role.
 with roles_del as (
-    select * from (select unnest(%(roles)s) as roleid) as f
-    where f.roleid <> all(%(tolink)s)
+    select * from (select unnest(%(roles)s::uuid[]) as roleid) as f
+    where f.roleid <> all(%(tolink)s::uuid[])
 )
-delete from userroles where userroles.userid=%(id)s and 
+delete from userroles where userroles.userid=%(id)s::uuid and 
                             userroles.roleid in (select roleid from roles_del)"""
 
     with app.dbconn() as conn:

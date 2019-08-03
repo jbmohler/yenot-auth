@@ -1,11 +1,9 @@
 import sys
-import getpass
 import argparse
 import yenotauth.initdb as initdb
 
-password = getpass.getpass()
 conn = initdb.create_connection(sys.argv[1])
 try:
-    initdb.create_yenot_user(conn, sys.argv[2], password)
+    initdb.create_yenot_role(conn, sys.argv[2])
 finally:
     conn.close()

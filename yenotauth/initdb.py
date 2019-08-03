@@ -69,7 +69,7 @@ insert into activities (act_name, description, url)
 values(%(n)s, %(d)s, %(u)s)
 on conflict (act_name) do nothing"""
         for ep in app.endpoints():
-            cursor.execute(ins, {'n': ep.name, 'd': None, 'u': ep.url})
+            cursor.execute(ins, {'n': ep.name, 'd': ep.config.get('report_title', None), 'u': ep.url})
 
 def rolemap_activities(conn, routes, roles):
     select_unroled = """
@@ -141,4 +141,10 @@ values (
     (select id from users where username=%(u)s))"""
         for role, _ in [SYS_ADMIN_ROLE, USER_ROLE]:
             cursor.execute(ins, {'r': role, 'u': user})
+    conn.commit()
+
+def create_yenot_role(conn, role, sort=50):
+    with conn.cursor() as cursor:
+        ins = "insert into roles (role_name, sort) values (%s, %s)"
+        cursor.execute(ins, (role, sort))
     conn.commit()

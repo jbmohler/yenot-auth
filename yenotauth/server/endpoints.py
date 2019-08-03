@@ -4,6 +4,12 @@ import yenot.backend.api as api
 
 app = api.get_global_app()
 
+def report_endpoints(app):
+    return [r for r in app.routes if 'report_title' in r.config and not r.config.get('hide_report', False)]
+
+def route_prompts(r):
+    return [] if 'report_prompts' not in r.config else r.config['report_prompts']()
+
 def app_endpoints():
     kls_endpoint = rtlib.fixedrecord('Endpoint', ['method', 'url', 'name', 'description'])
     destinations = [r for r in app.routes]
