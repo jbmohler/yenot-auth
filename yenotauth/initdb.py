@@ -24,7 +24,7 @@ SYS_ADMIN_ACTS = [\
         'api_session_promote_2fa',
         'api_session_logout',
         'get_api_sessions_active',
-        'api_users',
+        'api_users_list',
         'api_users_lastlogin',
         'api_activities_by_role',
         'api_users_by_role',
@@ -42,24 +42,6 @@ SYS_ADMIN_ACTS = [\
         'api_roleactivities_by_roles',
         'put_api_roleactivities_by_roles']
 
-def create_connection(dburl):
-    result = urllib.parse.urlsplit(dburl)
-
-    dbname = result.path[1:]
-
-    kwargs = {'dbname': dbname}
-    if result.hostname != None:
-        kwargs['host'] = result.hostname
-    if result.port != None:
-        kwargs['port'] = result.port
-    if result.username != None:
-        kwargs['user'] = result.username
-    if result.password != None:
-        kwargs['password'] = result.password
-    kwargs['cursor_factory'] = psycopg2.extras.NamedTupleCursor
-
-    return psycopg2.connect(**kwargs)
-
 def register_activities(conn):
     app = api.get_global_app()
 
@@ -69,7 +51,7 @@ insert into activities (act_name, description, url)
 values(%(n)s, %(d)s, %(u)s)
 on conflict (act_name) do nothing"""
         for ep in app.endpoints():
-            cursor.execute(ins, {'n': ep.name, 'd': ep.config.get('report_title', None), 'u': ep.url})
+            cursor.execute(ins, {'n': ep.name, 'd': getattr(ep, 'config', {}).get('report_title', None), 'u': ep.url})
 
 def rolemap_activities(conn, routes, roles):
     select_unroled = """

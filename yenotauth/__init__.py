@@ -5,7 +5,10 @@ from . import core
 
 def yenot_auth_app_init(app):
     app.__class__.raise_unauthorized = core.raise_unauthorized
+    app.__class__.endpoints = core.endpoints
+    app.__class__.report_endpoints = core.report_endpoints
     app.install(core.YenotAuth())
+
 
 def yenot_auth_data_init(conn, args):
     from . import initdb

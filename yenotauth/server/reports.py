@@ -1,6 +1,6 @@
 from bottle import request, response
 import yenot.backend.api as api
-from . import endpoints
+import yenotauth.core
 
 app = api.get_global_app()
 
@@ -37,12 +37,12 @@ where roleactivities.permitted /*WHERE*/"""
 
         data = api.sql_tab2(conn, select, params)
 
-        reports = {r.name: r for r in endpoints.report_endpoints(app)}
+        reports = {r.name: r for r in app.report_endpoints()}
         data = data[0], [r for r in data[1] if r.act_name in reports]
 
         columns = api.tab2_columns_transform(data[0], insert=[('id', 'prompts')])
         def xform_add_prompts(oldrow, row):
-            row.prompts = endpoints.route_prompts(reports[row.act_name])
+            row.prompts = yenotauth.core.route_prompts(reports[row.act_name])
         rows = api.tab2_rows_transform(data, columns, xform_add_prompts)
 
         results.tables['reports', True] = columns, rows

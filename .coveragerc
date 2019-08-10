@@ -1,0 +1,8 @@
+[run]
+omit = 
+    # blessed virtual env directory
+    */site-packages/*
+    */yenot/*
+    */site.py
+    */sitecustomize.py
+parallel = True

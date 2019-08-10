@@ -338,7 +338,7 @@ def get_users_prompts():
             'userrole': {'label': 'Role', 'type': 'yenot_role.surrogate'}}
     return [(a, cm.get(a, None)) for a in ['include_inactive', 'userrole']]
 
-@app.get('/api/users', name='api_users', \
+@app.get('/api/users/list', name='api_users_list', \
         report_title='User List', report_prompts=get_users_prompts)
 def get_users():
     iinactive = api.parse_bool(request.params.get('include_inactive', False))
@@ -588,7 +588,7 @@ where activities.id=%(r)s
     return results.json_out()
 
 
-@app.get('/api/userroles/by_users', name='api_userroles_by_users')
+@app.get('/api/userroles/by-users', name='api_userroles_by_users')
 def get_userroles_by_users():
     # comma delimited list of user ids
     users = request.params.get('users').split(',')
@@ -626,20 +626,20 @@ where users.id in (select userid from users_universe)"""
         results.tables['usernames'] = api.sql_tab2(conn, select2, p)
     return results.json_out()
 
-@app.put('/api/userroles/by_users', name='put_api_userroles_by_users')
+@app.put('/api/userroles/by-users', name='put_api_userroles_by_users')
 def put_userroles_by_users():
     coll = api.table_from_tab2('userroles', required=['id', 'user_list'])
     # comma delimited list of user ids
-    users = request.forms.get('users').split(',')
+    users = request.params.get('users').split(',')
     users = list(users)
 
     insert = """
 -- insert role--user links for all users in universe not yet linked to role.
 with users_add as (
-    select * from (select unnest(%(users)s) as userid) as f
-    where f.userid = any(%(tolink)s)
+    select * from (select unnest(%(users)s::uuid[]) as userid) as f
+    where f.userid = any(%(tolink)s::uuid[])
 ), toinsert as (
-    select %(id)s, users_add.userid
+    select %(id)s::uuid, users_add.userid
     from users_add
     left outer join userroles on userroles.roleid=%(id)s and userroles.userid=users_add.userid
     where userroles.userid is null
@@ -650,8 +650,8 @@ insert into userroles (roleid, userid)
     delete = """
 -- insert role--user links for all users in universe not yet linked to role.
 with users_del as (
-    select * from (select unnest(%(users)s) as userid) as f
-    where f.userid <> all(%(tolink)s)
+    select * from (select unnest(%(users)s::uuid[]) as userid) as f
+    where f.userid <> all(%(tolink)s::uuid[])
 )
 delete from userroles where userroles.roleid=%(id)s and 
                             userroles.userid in (select userid from users_del)"""
@@ -673,7 +673,7 @@ delete from userroles where userroles.roleid=%(id)s and
 
     return api.Results().json_out()
 
-@app.get('/api/userroles/by_roles', name='api_userroles_by_roles')
+@app.get('/api/userroles/by-roles', name='api_userroles_by_roles')
 def get_userroles_by_roles():
     # comma delimited list of role ids
     roles = request.params.get('roles').split(',')
@@ -713,11 +713,11 @@ where roles.id in (select roleid from roles_universe)"""
         results.tables['rolenames'] = api.sql_tab2(conn, select2, p)
     return results.json_out()
 
-@app.put('/api/userroles/by_roles', name='put_api_userroles_by_roles')
+@app.put('/api/userroles/by-roles', name='put_api_userroles_by_roles')
 def put_userroles_by_roles():
     coll = api.table_from_tab2('userroles', required=['id', 'role_list'])
     # comma delimited list of role ids
-    roles = request.forms.get('roles').split(',')
+    roles = request.params.get('roles').split(',')
     roles = list(roles)
 
     insert = """
@@ -760,7 +760,7 @@ delete from userroles where userroles.userid=%(id)s::uuid and
 
     return api.Results().json_out()
 
-@app.get('/api/roleactivities/by_roles', name='api_roleactivities_by_roles')
+@app.get('/api/roleactivities/by-roles', name='api_roleactivities_by_roles')
 def get_roleactivities_by_roles():
     # comma delimited list of role ids
     roles = request.params.get('roles').split(',')
@@ -801,11 +801,11 @@ from roles join roles_universe on roles_universe.roleid=roles.id"""
         results.tables['rolenames'] = api.sql_tab2(conn, select2, p)
     return results.json_out()
 
-@app.put('/api/roleactivities/by_roles', name='put_api_roleactivities_by_roles')
+@app.put('/api/roleactivities/by-roles', name='put_api_roleactivities_by_roles')
 def put_api_roleactivities_by_roles():
     coll = api.table_from_tab2('roleactivities', required=['id', 'permissions'])
     # comma delimited list of role ids
-    roles = request.forms.get('roles').split(',')
+    roles = request.params.get('roles').split(',')
     roles = list(roles)
 
     for row in coll.rows:
