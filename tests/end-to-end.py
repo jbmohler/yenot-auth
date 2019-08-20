@@ -182,11 +182,12 @@ def test_crud_roles(srvparams):
 
         client = session.std_client()
 
-        newrole = rtlib.simple_table(['role_name', 'sort'])
-        with newrole.adding_row() as r2:
-            r2.role_name = 'My Test Role'
-            r2.sort = 50
-        client.put('api/roles', files={'rolelist': newrole.as_http_post_file()})
+        content = client.get('api/role/new')
+        rtable = content.main_table()
+        role = rtable.rows[0]
+        role.role_name = 'My Test Role'
+        role.sort = 50
+        client.put('api/role/{}', role.id, files={'role': rtable.as_http_post_file()})
 
         content = client.get('api/users/list')
         admin = [user for user in content.main_table().rows if user.username == 'ADMIN'][0]

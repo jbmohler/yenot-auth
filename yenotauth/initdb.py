@@ -24,22 +24,24 @@ SYS_ADMIN_ACTS = [\
         'api_session_promote_2fa',
         'api_session_logout',
         'get_api_sessions_active',
-        'api_users_list',
+        'get_api_users_list',
         'api_users_lastlogin',
-        'api_activities_by_role',
-        'api_users_by_role',
-        'get_api_role_record',
         'get_api_roles_list',
-        'put_api_roles',
-        'delete_api_role',
+        'get_api_role_new',
+        'get_api_role_record',
+        'put_api_role_record',
+        'delete_api_role_record',
         'get_api_activities_list',
         'put_api_activities',
         'get_api_activity_record',
-        'api_userroles_by_users',
+        'delete_api_activity_record',
+        'api_activities_by_role',
+        'api_users_by_role',
+        'get_api_userroles_by_users',
         'put_api_userroles_by_users',
-        'api_userroles_by_roles',
+        'get_api_userroles_by_roles',
         'put_api_userroles_by_roles',
-        'api_roleactivities_by_roles',
+        'get_api_roleactivities_by_roles',
         'put_api_roleactivities_by_roles']
 
 def register_activities(conn):
@@ -99,7 +101,6 @@ values (
     (select id from roles where role_name=%(rn)s),
     (select id from activities where act_name=%(u)s))"""
         for aname in USER_ACTS:
-            print(aname)
             cursor.execute(ins, {'rn': 'User', 'u': aname})
         for aname in SYS_ADMIN_ACTS:
             cursor.execute(ins, {'rn': 'System Administrator', 'u': aname})

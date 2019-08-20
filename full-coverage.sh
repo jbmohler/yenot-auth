@@ -1,6 +1,6 @@
 #!in/sh
 
-export YENOT_PORT=8088
+export YENOT_PORT=18018
 export YENOT_DB_URL=postgresql:///my_coverage_test
 export INIT_DB_PASSWD=123admin-test123
 

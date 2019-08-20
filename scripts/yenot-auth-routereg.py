@@ -23,14 +23,17 @@ if __name__ == '__main__':
         parse.print_help()
         sys.exit(1)
 
-    conn = initdb.create_connection(args.dburl)
+    import yenot.backend
+    conn = yenot.backend.create_connection(args.dburl)
     try:
-        import yenot.backend
         app = yenot.backend.init_application(args.dburl)
 
         import yenot.server
         for m in args.module:
             importlib.import_module(m)
+        import yenot.backend.api as api
+        for func in api.app_init_functions:
+            func(app)
 
         initdb.register_activities(conn)
         initdb.rolemap_activities(conn, args.route, args.role)

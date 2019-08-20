@@ -338,7 +338,7 @@ def get_users_prompts():
             'userrole': {'label': 'Role', 'type': 'yenot_role.surrogate'}}
     return [(a, cm.get(a, None)) for a in ['include_inactive', 'userrole']]
 
-@app.get('/api/users/list', name='api_users_list', \
+@app.get('/api/users/list', name='get_api_users_list', \
         report_title='User List', report_prompts=get_users_prompts)
 def get_users():
     iinactive = api.parse_bool(request.params.get('include_inactive', False))
@@ -471,24 +471,8 @@ where roles.id=%(r)s
 
     return results.json_out()
 
-@app.get('/api/role/<roleid>/record', name='get_api_role_record')
-def get_api_role_record(roleid):
-    select = """
-select roles.id, roles.role_name, roles.sort
-from roles
-where roles.id=%(r)s
-"""
-
-    cm = {\
-            'id': {'type': 'yenot_role.surrogate'},
-            'role_name': {'label': 'Role', 'type': 'yenot_role.name', 'url_key': 'id', 'represents': True}}
-
-    results = api.Results()
-    with app.dbconn() as conn:
-        results.tables['role'] = api.sql_tab2(conn, select, {'r': roleid}, cm)
-    return results.json_out()
-
-@app.get('/api/roles/list', name='get_api_roles_list')
+@app.get('/api/roles/list', name='get_api_roles_list',
+        report_title='Role List')
 def get_api_roles_list():
     select = """
 select roles.id, roles.role_name, userroles2.count
@@ -511,22 +495,63 @@ left outer join (
         results.tables['roles', True] = api.sql_tab2(conn, select, None, cm)
     return results.json_out()
 
-@app.put('/api/roles', name='put_api_roles')
-def put_api_roles():
-    coll = api.table_from_tab2('rolelist', amendments=['id'], required=['role_name', 'sort'])
+@app.get('/api/role/new', name='get_api_role_new')
+def get_api_role_new():
+    select = """
+select roles.id, roles.role_name, roles.sort
+from roles
+where false
+"""
 
-    for row in coll.rows:
-        if not hasattr(row, 'id'):
+    cm = {\
+            'id': {'type': 'yenot_role.surrogate'},
+            'role_name': {'label': 'Role', 'type': 'yenot_role.name', 'url_key': 'id', 'represents': True}}
+
+    results = api.Results()
+    with app.dbconn() as conn:
+        cols, rows = api.sql_tab2(conn, select, None, cm)
+        def default_row(index, row):
             row.id = str(uuid.uuid1())
+        rows = api.tab2_rows_default(cols, [None], default_row)
+        results.tables['role', True] = cols, rows
+    return results.json_out()
+
+@app.get('/api/role/<roleid>', name='get_api_role_record')
+def get_api_role_record(roleid):
+    select = """
+select roles.id, roles.role_name, roles.sort
+from roles
+where roles.id=%(r)s
+"""
+
+    cm = {\
+            'id': {'type': 'yenot_role.surrogate'},
+            'role_name': {'label': 'Role', 'type': 'yenot_role.name', 'url_key': 'id', 'represents': True}}
+
+    results = api.Results()
+    with app.dbconn() as conn:
+        results.tables['role', True] = api.sql_tab2(conn, select, {'r': roleid}, cm)
+    return results.json_out()
+
+@app.put('/api/role/<roleid>', name='put_api_role_record')
+def put_api_role_record(roleid):
+    role = api.table_from_tab2('role', amendments=['id'], required=['role_name', 'sort'])
+
+    if len(role.rows) != 1:
+        raise api.UserError('invalid-input', 'Exactly one role required.')
+
+    for row in role.rows:
+        if not hasattr(row, 'id'):
+            row.id = roleid
 
     with app.dbconn() as conn:
         with api.writeblock(conn) as w:
-            w.upsert_rows('roles', coll)
+            w.upsert_rows('roles', role)
         conn.commit()
     return api.Results().json_out()
 
-@app.delete('/api/role/<roleid>', name='delete_api_role')
-def delete_api_role(roleid):
+@app.delete('/api/role/<roleid>', name='delete_api_role_record')
+def delete_api_role_record(roleid):
     # consider using cascade
     delete = """
 delete from roleactivities where roleid=%(r)s;
@@ -539,7 +564,8 @@ delete from roles where id=%(r)s;
         conn.commit()
     return api.Results().json_out()
 
-@app.get('/api/activities/list', name='get_api_activities_list')
+@app.get('/api/activities/list', name='get_api_activities_list',
+        report_title='Activity List')
 def get_api_activities_list():
     select = """
 select activities.id, activities.act_name, activities.description, activities.url
@@ -570,7 +596,7 @@ def put_api_activities():
         conn.commit()
     return api.Results().json_out()
 
-@app.get('/api/activity/<activityid>/record', name='get_api_activity_record')
+@app.get('/api/activity/<activityid>', name='get_api_activity_record')
 def get_api_activity_record(activityid):
     select = """
 select activities.id, activities.act_name, activities.description, activities.note
@@ -584,12 +610,24 @@ where activities.id=%(r)s
 
     results = api.Results()
     with app.dbconn() as conn:
-        results.tables['activity'] = api.sql_tab2(conn, select, {'r': activityid}, cm)
+        results.tables['activity', True] = api.sql_tab2(conn, select, {'r': activityid}, cm)
     return results.json_out()
 
+@app.delete('/api/activity/<activityid>', name='delete_api_activity_record')
+def delete_api_activity_record(activityid):
+    delete = """
+delete from roleactivities where activityid=%(r)s;
+delete from activities where id=%(r)s;
+"""
 
-@app.get('/api/userroles/by-users', name='api_userroles_by_users')
-def get_userroles_by_users():
+    results = api.Results()
+    with app.dbconn() as conn:
+        api.sql_void(conn, delete, {'r': activityid})
+        conn.commit()
+    return results.json_out()
+
+@app.get('/api/userroles/by-users', name='get_api_userroles_by_users')
+def get_api_userroles_by_users():
     # comma delimited list of user ids
     users = request.params.get('users').split(',')
     users = list(users)
@@ -673,8 +711,8 @@ delete from userroles where userroles.roleid=%(id)s and
 
     return api.Results().json_out()
 
-@app.get('/api/userroles/by-roles', name='api_userroles_by_roles')
-def get_userroles_by_roles():
+@app.get('/api/userroles/by-roles', name='get_api_userroles_by_roles')
+def get_api_userroles_by_roles():
     # comma delimited list of role ids
     roles = request.params.get('roles').split(',')
     roles = list(roles)
@@ -714,7 +752,7 @@ where roles.id in (select roleid from roles_universe)"""
     return results.json_out()
 
 @app.put('/api/userroles/by-roles', name='put_api_userroles_by_roles')
-def put_userroles_by_roles():
+def put_api_userroles_by_roles():
     coll = api.table_from_tab2('userroles', required=['id', 'role_list'])
     # comma delimited list of role ids
     roles = request.params.get('roles').split(',')
@@ -760,8 +798,8 @@ delete from userroles where userroles.userid=%(id)s::uuid and
 
     return api.Results().json_out()
 
-@app.get('/api/roleactivities/by-roles', name='api_roleactivities_by_roles')
-def get_roleactivities_by_roles():
+@app.get('/api/roleactivities/by-roles', name='get_api_roleactivities_by_roles')
+def get_api_roleactivities_by_roles():
     # comma delimited list of role ids
     roles = request.params.get('roles').split(',')
     roles = list(roles)
