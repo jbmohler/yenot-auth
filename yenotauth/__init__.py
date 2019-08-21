@@ -7,6 +7,7 @@ def yenot_auth_app_init(app):
     app.__class__.raise_unauthorized = core.raise_unauthorized
     app.__class__.endpoints = core.endpoints
     app.__class__.report_endpoints = core.report_endpoints
+    app.__class__.request_content_title = core.request_content_title
     app.install(core.YenotAuth())
 
 

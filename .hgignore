@@ -2,5 +2,6 @@ syntax: glob
 
 *.swp
 *.egg-info
+.coverage
 .pytest_cache
 __pycache__
