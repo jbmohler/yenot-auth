@@ -24,7 +24,7 @@ where sessions.id=%(sid)s and roleactivities.permitted
 
 @app.post('/api/user', name='post_api_user')
 def post_api_user():
-    user = api.table_from_tab2('user', amendments=['id'])
+    user = api.table_from_tab2('user', amendments=['id'], options=['username', 'full_name', 'password', 'pin', 'roles', 'inactive', 'descr'])
 
     if len(user.rows) != 1:
         raise api.UserError('invalid-input', 'Exactly one user required.')
@@ -74,27 +74,68 @@ from unnest(%(roles)s) rl"""
         conn.commit()
     return api.Results().json_out()
 
-@app.post('/api/user/me/change-password', name='api_user_me_change_password')
-def api_user_me_change_password():
-    oldpass = request.forms.get('oldpass')
-    newpass = request.forms.get('newpass')
+@app.get('/api/user/<userid>', name='get_api_user_record')
+def get_api_user_record(userid):
+    select = """
+select users.id, users.username, full_name, descr,
+    inactive,
+    pinhash is not null as has_pin
+from users
+where users.id=%(r)s
+"""
 
+    cm = {\
+            'id': {'type': 'yenot_user.surrogate'},
+            'username': {'label': 'Role', 'type': 'yenot_user.name', 'url_key': 'id', 'represents': True}}
+
+    results = api.Results()
+    with app.dbconn() as conn:
+        results.tables['user', True] = api.sql_tab2(conn, select, {'r': userid}, cm)
+    return results.json_out()
+
+@app.delete('/api/user/<userid>', name='delete_api_user_record')
+def delete_api_user_record(userid):
+    # consider using cascade
+    delete = """
+delete from userroles where userid=%(uid)s;
+delete from sessions where userid=%(uid)s;
+delete from users where id=%(uid)s;
+"""
+
+    with app.dbconn() as conn:
+        active = api.active_user(conn)
+        if active.id == userid:
+            raise api.UserError('data-validation', 'The authenticated user cannot delete their own account.')
+
+        api.sql_void(conn, delete, {'uid': userid})
+        conn.commit()
+    return api.Results().json_out()
+
+def _validate_oldpass(conn, oldpass):
     select = """
 select id, username, pwhash, inactive
 from users
 where id=(select userid from sessions where sessions.id=%(sid)s)"""
 
+    user = api.sql_1object(conn, select, {'sid': request.headers['X-Yenot-SessionID']})
+
+    if user == None:
+        raise api.UserError('invalid-user', 'Cannot find the record for the password change')
+    if bcrypt.hashpw(oldpass.encode('utf8'), user.pwhash.encode('utf8')) != user.pwhash.encode('utf8'):
+        raise api.UserError('invalid-password', 'old password does not match')
+
+    return user
+
+@app.post('/api/user/me/change-password', name='api_user_me_change_password')
+def api_user_me_change_password():
+    oldpass = request.forms.get('oldpass')
+    newpass = request.forms.get('newpass')
+
     update = """
 update users set pwhash=%(h)s where id=%(i)s"""
 
     with app.dbconn() as conn:
-        user = api.sql_1object(conn, select, {'sid': request.headers['X-Yenot-SessionID']})
-
-        if user == None:
-            raise api.UserError('invalid-user', 'Cannot find the record for the password change')
-
-        if bcrypt.hashpw(oldpass.encode('utf8'), user.pwhash.encode('utf8')) != user.pwhash.encode('utf8'):
-            raise api.UserError('invalid-password', 'old password does not match')
+        user = _validate_oldpass(conn, oldpass)
 
         hashed = bcrypt.hashpw(newpass.encode('utf8'), bcrypt.gensalt())
         hashed = hashed.decode('ascii')
@@ -109,22 +150,11 @@ def api_user_me_change_pin():
     newpin = request.forms.get('newpin')
     t2fa = json.loads(request.forms.get('target_2fa'))
 
-    select = """
-select id, username, pwhash, inactive
-from users
-where id=(select userid from sessions where sessions.id=%(sid)s)"""
-
     update = """
 update users set pinhash=%(h)s, target_2fa=%(fa)s where id=%(i)s"""
 
     with app.dbconn() as conn:
-        user = api.sql_1object(conn, select, {'sid': request.headers['X-Yenot-SessionID']})
-
-        if user == None:
-            raise api.UserError('invalid-user', 'Cannot find the record for the pin change')
-
-        if bcrypt.hashpw(oldpass.encode('utf8'), user.pwhash.encode('utf8')) != user.pwhash.encode('utf8'):
-            raise api.UserError('invalid-pin', 'old pin does not match')
+        user = _validate_oldpass(conn, oldpass)
 
         hashed = bcrypt.hashpw(newpin.encode('utf8'), bcrypt.gensalt())
         hashed = hashed.decode('ascii')
@@ -238,7 +268,10 @@ values (%(sid)s, %(uid)s, %(ip)s, %(to)s, true, %(pin6)s);"""
             t2fa = rows[0].target_2fa
             if 'file' in t2fa:
                 import codecs
-                with open('./opslogs/mypin-{}.txt'.format(codecs.encode(session.encode('ascii'), 'hex').decode('ascii')), 'w') as f:
+                dirname = os.environ['YENOT_2FA_DIR']
+                seg = codecs.encode(session.encode('ascii'), 'hex').decode('ascii')
+                fname = os.path.join(dirname, 'authpin-{}'.format(seg))
+                with open(fname, 'w') as f:
                     f.write(''.join(pin6))
             if 'sms' in t2fa:
                 from twilio.rest import Client

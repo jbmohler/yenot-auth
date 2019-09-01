@@ -10,6 +10,7 @@ def yenot_auth_app_init(app):
     app.__class__.request_content_title = core.request_content_title
     app.install(core.YenotAuth())
 
+    api.active_user = core.active_user
 
 def yenot_auth_data_init(conn, args):
     from . import initdb

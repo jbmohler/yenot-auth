@@ -1,5 +1,8 @@
 import os
+import tempfile
+import codecs
 import sys
+import json
 import time
 import concurrent.futures as futures
 import rtlib
@@ -17,7 +20,6 @@ def test_url(dbname):
 def init_database(dburl):
     r = os.system('{} ../yenot/scripts/init-database.py {} --full-recreate \
             --ddl-script=schema/authentication.sql \
-            --ddl-script=#yenotroot#/tests/item.sql  \
             --module=yenotauth.server --user=admin'.format(sys.executable, dburl))
     if r != 0:
         print('error exit')
@@ -205,12 +207,104 @@ def test_crud_roles(srvparams):
         client.put('api/userroles/by-users', users=admin.id,
                 files={'userroles': permitted.as_http_post_file()})
 
-        # now delete the role that I just added myself to!?!
+        # now read, delete the role that I just added myself to!?!
         content = client.get('api/roles/list')
         mtr = [role for role in content.main_table().rows if role.role_name == 'My Test Role'][0]
+        client.get('api/role/{}', mtr.id)
         client.delete('api/role/{}', mtr.id)
 
         session.close()
+
+def test_change_pin(server, uname, pword):
+    if True:
+        # want to indent at same level as everything else
+        session = YASession(server.url)
+        session.authenticate(uname, pword)
+
+        client = session.std_client()
+
+        data = {
+                'oldpass': pword,
+                'newpin': '23456',
+                'target_2fa': json.dumps({'file': None})}
+        client.post('api/user/me/change-pin', data=data)
+
+        try:
+            data = {
+                    'oldpass': 'wrong password',
+                    'newpass': 'test2345'}
+            client.post('api/user/me/change-password', data=data)
+        except yclient.YenotError as e:
+            assert str(e).find('does not match') >= 0
+
+        data = {
+                'oldpass': pword,
+                'newpass': 'test2345'}
+        client.post('api/user/me/change-password', data=data)
+
+        session.close()
+
+        # log in with the pin
+        session = YASession(server.url)
+        try:
+            session.authenticate_pin1(uname, '2xy56')
+        except yclient.YenotError as e:
+            assert str(e).startswith('Invalid')
+
+        session.authenticate_pin1(uname, '23456')
+        # read pin from file!!
+        seg = codecs.encode(session.yenot_sid.encode('ascii'), 'hex').decode('ascii')
+        fname = os.path.join(os.environ['YENOT_2FA_DIR'], 'authpin-{}'.format(seg))
+        pin2 = open(fname, 'r').read()
+        session.authenticate_pin2(pin2)
+
+        session.close()
+
+def test_crud_users(srvparams):
+    tdir = tempfile.TemporaryDirectory()
+    os.environ['YENOT_2FA_DIR'] = tdir.name
+
+    with yenot.tests.server_running(**srvparams) as server:
+        session = YASession(server.url)
+        session.authenticate('admin', os.environ['INIT_DB_PASSWD'])
+
+        client = session.std_client()
+
+        content = client.get('api/roles/list')
+        roles = content.main_table()
+        roles = [r for r in roles.rows if r.role_name == 'User']
+
+        user = rtlib.simple_table(['username', 'full_name', 'password', 'roles'])
+        with user.adding_row() as r2:
+            r2.username = 'Test1'
+            r2.full_name = 'Test X. Person'
+            r2.password = 'test1234'
+            r2.roles = [r.id for r in roles]
+        client.post('api/user', files={'user': user.as_http_post_file()})
+
+        test_change_pin(server, 'test1', 'test1234')
+
+        content = client.get('api/userroles/by-roles', roles=roles[0].id)
+
+        permitted = rtlib.simple_table(['id', 'role_list'])
+
+        for row in content.main_table().rows:
+            if row.role_list == None or row.role_list.find(roles[0].id) < 0:
+                with permitted.adding_row() as r2:
+                    r2.id = row.id
+                    r2.role_list = [r.id for r in roles]
+
+        client.put('api/userroles/by-roles', roles=roles[0].id,
+                files={'userroles': permitted.as_http_post_file()})
+
+        content = client.get('api/users/list')
+        test = [user for user in content.main_table().rows if user.username == 'TEST1'][0]
+        client.get('api/user/{}', test.id)
+        client.delete('api/user/{}', test.id)
+
+        session.close()
+
+    tdir.cleanup()
 
 if __name__ == '__main__':
     srvparams = {
@@ -223,3 +317,4 @@ if __name__ == '__main__':
     test_login(srvparams)
     test_authorize_remainder(srvparams)
     test_crud_roles(srvparams)
+    test_crud_users(srvparams)

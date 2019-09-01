@@ -13,6 +13,16 @@ def endpoints(self):
     destinations = [r for r in self.routes]
     return [kls_endpoint(r.method, r.rule[1:], r.name, r.config) for r in destinations if r.rule[1:] != '']
 
+def active_user(conn):
+    select = """
+select users.id, users.username
+from sessions
+join users on users.id=sessions.userid
+where sessions.id=%(sid)s
+"""
+    sid = request.headers.get('X-Yenot-SessionID', None)
+    return api.sql_1object(conn, select, {'sid': sid})
+
 def request_content_title(self):
     title = request.route.config.get('_yenot_title_', None)
     if title in ('', None):
