@@ -298,7 +298,6 @@ def api_session_promote_2fa():
     session = request.headers['X-Yenot-SessionID']
     pin2 = request.forms.get('pin2')
 
-    username = request.params.get('username', None)
     ip = request.environ.get('REMOTE_ADDR')
 
     select = 'select * from sessions where id=%(sid)s'

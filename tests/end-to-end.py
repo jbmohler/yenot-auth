@@ -3,8 +3,7 @@ import tempfile
 import codecs
 import sys
 import json
-import time
-import concurrent.futures as futures
+import requests
 import rtlib
 import yenot.client as yclient
 import yenot.tests

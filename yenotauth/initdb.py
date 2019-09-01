@@ -1,28 +1,22 @@
 import re
 import bcrypt
-import urllib.parse
-import psycopg2
-import psycopg2.extras
 import yenot.backend.api as api
 
 SYS_ADMIN_ROLE = ('System Administrator', 999)
 USER_ROLE = ('User', 1)
 
+PUBLIC_ACTS = [\
+        'api_session',
+        'api_session_by_pin',
+        'api_session_promote_2fa']
+
 USER_ACTS = [\
-        #'api_user_reports',
-        #'api_report_runmeta', 
-        #'api_report_info',
-        #'api_info',
         'api_user_me_change_password',
         'api_user_me_change_pin',
         'api_endpoints',
         'api_session_logout']
 
 SYS_ADMIN_ACTS = [\
-        'api_session',
-        'api_session_by_pin',
-        'api_session_promote_2fa',
-        'api_session_logout',
         'get_api_sessions_active',
         'get_api_users_list',
         'api_users_lastlogin',
