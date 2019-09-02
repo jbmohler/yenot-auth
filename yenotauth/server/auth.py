@@ -3,10 +3,10 @@ import json
 import uuid
 import datetime
 import random
-import bcrypt
 import base64
+import bcrypt
 import psycopg2.extras
-from bottle import request, response, HTTPError
+from bottle import request, response
 import rtlib
 import yenot.backend.api as api
 
