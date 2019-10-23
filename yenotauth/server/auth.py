@@ -671,10 +671,10 @@ with users_universe as (
 select roles.id, roles.role_name, u2.user_list
 from roles
 left outer join (
-                    select roleid, array_agg(userroles.userid) as user_list
-                    from userroles 
-                    join users_universe on users_universe.userid=userroles.userid
-                    group by roleid) as u2 on u2.roleid=roles.id
+    select roleid, array_agg(userroles.userid::text) as user_list
+    from userroles 
+    join users_universe on users_universe.userid=userroles.userid
+    group by roleid) as u2 on u2.roleid=roles.id
 order by roles.sort
 """
 
@@ -690,7 +690,7 @@ where users.id in (select userid from users_universe)"""
     with app.dbconn() as conn:
         cm = {\
                 'id': {'type': 'yenot_role.surrogate'},
-                'name': {'type': 'yenot_role.name', 'url_key': 'id', 'represents': True}}
+                'role_name': {'type': 'yenot_role.name', 'url_key': 'id', 'represents': True}}
         p = {'users': users}
         results.tables['users', True] = api.sql_tab2(conn, select, p, cm)
         results.tables['usernames'] = api.sql_tab2(conn, select2, p)
@@ -756,10 +756,10 @@ with roles_universe as (
 select users.id, users.username, u2.role_list
 from users
 left outer join (
-                    select userid, array_agg(userroles.roleid) as role_list
-                    from userroles 
-                    join roles_universe on roles_universe.roleid=userroles.roleid
-                    group by userid) as u2 on u2.userid=users.id
+    select userid, array_agg(userroles.roleid::text) as role_list
+    from userroles 
+    join roles_universe on roles_universe.roleid=userroles.roleid
+    group by userid) as u2 on u2.userid=users.id
 where not users.inactive
 order by users.username
 """
@@ -777,7 +777,7 @@ where roles.id in (select roleid from roles_universe)"""
     with app.dbconn() as conn:
         cm = {\
                 'id': {'type': 'yenot_user.surrogate'},
-                'name': {'type': 'yenot_user.name', 'url_key': 'id', 'represents': True}}
+                'username': {'type': 'yenot_user.name', 'url_key': 'id', 'represents': True}}
         p = {'roles': roles}
         results.tables['users', True] = api.sql_tab2(conn, select, p, cm)
         results.tables['rolenames'] = api.sql_tab2(conn, select2, p)
@@ -838,24 +838,24 @@ def get_api_roleactivities_by_roles():
 
     select = """
 with roles_universe as (
-	select unnest(%(roles)s::uuid[]) as roleid
+    select unnest(%(roles)s::uuid[]) as roleid
 )
 select activities.id, activities.act_name, activities.description, 
-	(
-		select array_to_json(array_agg(row_to_json(d)))
-		from (
-			select ra.roleid, ra.permitted, ra.dashboard, ra.dashprompts
-			from roleactivities as ra
-			join roles_universe on roles_universe.roleid=ra.roleid
-			where ra.activityid=activities.id
-		) as d
-	) as permissions
+        (
+            select array_to_json(array_agg(row_to_json(d)))
+            from (
+                select ra.roleid, ra.permitted, ra.dashboard, ra.dashprompts
+                from roleactivities as ra
+                join roles_universe on roles_universe.roleid=ra.roleid
+                where ra.activityid=activities.id
+            ) as d
+        ) as permissions
 from activities;
 """
 
     select2 = """
 with roles_universe as (
-	select unnest(%(roles)s::uuid[]) as roleid
+    select unnest(%(roles)s::uuid[]) as roleid
 )
 select roles.id, roles.role_name, roles.sort
 from roles join roles_universe on roles_universe.roleid=roles.id"""

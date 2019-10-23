@@ -198,7 +198,7 @@ def test_crud_roles(srvparams):
         permitted = rtlib.simple_table(['id', 'user_list'])
 
         for row in content.main_table().rows:
-            if row.user_list == None or row.user_list.find(admin.id) < 0:
+            if row.user_list == None or admin.id not in row.user_list:
                 with permitted.adding_row() as r2:
                     r2.id = row.id
                     r2.user_list = [admin.id]
@@ -288,7 +288,7 @@ def test_crud_users(srvparams):
         permitted = rtlib.simple_table(['id', 'role_list'])
 
         for row in content.main_table().rows:
-            if row.role_list == None or row.role_list.find(roles[0].id) < 0:
+            if row.role_list == None or roles[0].id not in row.role_list:
                 with permitted.adding_row() as r2:
                     r2.id = row.id
                     r2.role_list = [r.id for r in roles]
