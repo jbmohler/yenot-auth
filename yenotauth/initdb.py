@@ -26,7 +26,7 @@ SYS_ADMIN_ACTS = [\
         'put_api_role_record',
         'delete_api_role_record',
         'get_api_activities_list',
-        'put_api_activities',
+        'post_api_activities',
         'get_api_activity_record',
         'delete_api_activity_record',
         'api_activities_by_role',

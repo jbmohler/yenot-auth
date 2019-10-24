@@ -22,9 +22,12 @@ join roles on roles.id=userroles.roleid
 where sessions.id=%(sid)s and roleactivities.permitted
 """
 
+@app.put('/api/user/<userid>', name='put_api_user')
 @app.post('/api/user', name='post_api_user')
-def post_api_user():
+def post_api_user(userid=None):
     user = api.table_from_tab2('user', amendments=['id'], options=['username', 'full_name', 'password', 'pin', 'roles', 'inactive', 'descr'])
+
+    update_existing = request.route.method == 'PUT'
 
     if len(user.rows) != 1:
         raise api.UserError('invalid-input', 'Exactly one user required.')
@@ -57,7 +60,10 @@ from unnest(%(roles)s) rl"""
                         hashed = hashed.decode('ascii')
                         r2.pinhash = hashed
                     elif c == 'id' and getattr(row, 'id', None) == None:
-                        r2.id = None
+                        if update_existing:
+                            r2.id = userid
+                        else:
+                            r2.id = None
                     elif c == 'username':
                         r2.username = row.username.upper()
                     elif c == 'target_2fa':
@@ -614,8 +620,8 @@ from activities
         results.tables['activities', True] = api.sql_tab2(conn, select, None, cm)
     return results.json_out()
 
-@app.put('/api/activities', name='put_api_activities')
-def put_api_activities():
+@app.post('/api/activities', name='post_api_activities')
+def post_api_activities():
     activities = api.table_from_tab2('activities', amendments=['id'], required=['act_name', 'description'], allow_extra=True)
 
     for row in activities.rows:
@@ -638,7 +644,7 @@ where activities.id=%(r)s
 
     cm = {\
             'id': {'type': 'yenot_activity.surrogate'},
-            'name': {'label': 'Activity', 'type': 'yenot_activity.name', 'url_key': 'id', 'represents': True}}
+            'act_name': {'label': 'Activity', 'type': 'yenot_activity.name', 'url_key': 'id', 'represents': True}}
 
     results = api.Results()
     with app.dbconn() as conn:

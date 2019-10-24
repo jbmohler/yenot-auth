@@ -214,6 +214,32 @@ def test_crud_roles(srvparams):
 
         session.close()
 
+def test_crud_activities(srvparams):
+    with yenot.tests.server_running(**srvparams) as server:
+        session = YASession(server.url)
+        session.authenticate('admin', os.environ['INIT_DB_PASSWD'])
+
+        client = session.std_client()
+
+        rtable = rtlib.simple_table(['act_name', 'description'])
+        with rtable.adding_row() as activity:
+            activity.act_name = 'fake_placeholder'
+            activity.description = 'this is a test'
+        client.post('api/activities', files={'activities': rtable.as_http_post_file()})
+
+        content = client.get('api/activities/list')
+        myact = [row for row in content.main_table().rows if row.act_name == 'fake_placeholder'][0]
+
+        client.get('api/activity/{}', myact.id)
+        # now read, delete the activity that I just added myself to!?!
+        client.delete('api/activity/{}', myact.id)
+
+        content = client.get('api/activities/list')
+        myactsearch = [row for row in content.main_table().rows if row.act_name == 'fake_placeholder']
+        assert len(myactsearch) == 0
+
+        session.close()
+
 def test_change_pin(server, uname, pword):
     if True:
         # want to indent at same level as everything else
@@ -317,3 +343,4 @@ if __name__ == '__main__':
     test_authorize_remainder(srvparams)
     test_crud_roles(srvparams)
     test_crud_users(srvparams)
+    test_crud_activities(srvparams)
