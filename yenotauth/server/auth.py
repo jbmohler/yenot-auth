@@ -351,7 +351,8 @@ update sessions set inactive=true where id=%(sid)s"""
         conn.commit()
     return api.Results().json_out()
 
-@app.get('/api/sessions/active', name='get_api_sessions_active')
+@app.get('/api/sessions/active', name='get_api_sessions_active',
+        report_title='Active Sessions')
 def get_api_sessions_active():
     select = """
 select users.id, users.username, sessions.ipaddress, sessions.refreshed
@@ -360,13 +361,12 @@ join users on users.id=sessions.userid
 where not sessions.inactive
 """
 
-    cm = {\
-            'id': {'type': 'yenot_user.surrogate'},
-            'name': {'type': 'yenot_user.name', 'url_key': 'id'},
-            'ipaddress': {'label': 'IP Address'}}
-
-    results = api.Results()
+    results = api.Results(default_title=True)
     with app.dbconn() as conn:
+        cm = {\
+            'id': {'type': 'yenot_user.surrogate'},
+            'username': {'type': 'yenot_user.name', 'url_key': 'id'},
+            'ipaddress': {'label': 'IP Address'}}
         results.tables['sessions', True] = api.sql_tab2(conn, select, None, cm)
     return results.json_out()
 
@@ -442,8 +442,8 @@ order by users.username"""
         cm = {\
                 'id': {'type': 'yenot_user.surrogate'},
                 'username': {'type': 'yenot_user.name', 'url_key': 'id', 'represents': True},
+                'ipaddress': {'label': 'IP Address'},
                 'active_count': {'label': 'Active Sessions'}}
-
         results.tables['logins', True] = api.sql_tab2(conn, select, column_map=cm)
     return results.json_out()
 

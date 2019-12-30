@@ -1,5 +1,3 @@
-syntax: glob
-
 *.swp
 *.egg-info
 .coverage
