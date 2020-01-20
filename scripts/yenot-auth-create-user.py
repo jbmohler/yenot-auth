@@ -1,6 +1,5 @@
 import sys
 import getpass
-import argparse
 import yenotauth.initdb as initdb
 
 password = getpass.getpass()
