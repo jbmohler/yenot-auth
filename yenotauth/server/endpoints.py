@@ -4,21 +4,33 @@ import yenot.backend.api as api
 
 app = api.get_global_app()
 
+
 def get_api_endpoints_prompts():
     return api.PromptList(
-            unregistered=api.cgen.boolean(label='Only Unregistered Endpoints'),
-            __order__=['unregistered'])
+        unregistered=api.cgen.boolean(label="Only Unregistered Endpoints"),
+        __order__=["unregistered"],
+    )
 
-@app.get('/api/endpoints', name='api_endpoints', \
-        report_title='Yenot Entry Points', 
-        report_prompts=get_api_endpoints_prompts)
+
+@app.get(
+    "/api/endpoints",
+    name="api_endpoints",
+    report_title="Yenot Entry Points",
+    report_prompts=get_api_endpoints_prompts,
+)
 def get_api_endpoints():
-    unregistered = api.parse_bool(request.query.get('unregistered', False))
+    unregistered = api.parse_bool(request.query.get("unregistered", False))
 
     cm = {}
-    columns = [(a, cm.get(a, None)) for a in ['method', 'url', 'act_name', 'description']]
+    columns = [
+        (a, cm.get(a, None)) for a in ["method", "url", "act_name", "description"]
+    ]
     destinations = [r for r in app.routes]
-    rows = [(r.method, r.rule[1:], r.name, r.config.get('report_title', None)) for r in destinations if r.rule[1:] != '']
+    rows = [
+        (r.method, r.rule[1:], r.name, r.config.get("report_title", None))
+        for r in destinations
+        if r.rule[1:] != ""
+    ]
 
     results = api.Results(default_title=True)
     select = "select act_name from activities"
@@ -33,7 +45,9 @@ def get_api_endpoints():
 
     x = rtlib.ClientTable(columns, rows)
 
-    results.tables['endpoints', True] = x.as_tab2(column_map=cm)
-    results.key_labels += '{} unregistered endpoints'.format(len(unreg_rows))
-    results.keys['client-relateds'] = [('Register Endpoints', 'yenot:activities/register')]
+    results.tables["endpoints", True] = x.as_tab2(column_map=cm)
+    results.key_labels += "{} unregistered endpoints".format(len(unreg_rows))
+    results.keys["client-relateds"] = [
+        ("Register Endpoints", "yenot:activities/register")
+    ]
     return results.json_out()

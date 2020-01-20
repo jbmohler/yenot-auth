@@ -3,6 +3,7 @@ import getpass
 import yenot.backend.api as api
 from . import core
 
+
 def yenot_auth_app_init(app):
     app.__class__.raise_unauthorized = core.raise_unauthorized
     app.__class__.endpoints = core.endpoints
@@ -12,15 +13,16 @@ def yenot_auth_app_init(app):
 
     api.active_user = core.active_user
 
+
 def yenot_auth_data_init(conn, args):
     from . import initdb
 
     initdb.load_essentials(conn)
     if args.user != None:
-        if os.environ.get('INIT_DB_PASSWD', None) != None:
-            pw = os.environ['INIT_DB_PASSWD']
+        if os.environ.get("INIT_DB_PASSWD", None) != None:
+            pw = os.environ["INIT_DB_PASSWD"]
         else:
-            pw = getpass.getpass('Password for {}: '.format(args.user))
+            pw = getpass.getpass("Password for {}: ".format(args.user))
         initdb.create_yenot_user(conn, args.user, pw)
 
 
