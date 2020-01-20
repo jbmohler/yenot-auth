@@ -1,5 +1,4 @@
 import sys
-import argparse
 import yenotauth.initdb as initdb
 
 conn = initdb.create_connection(sys.argv[1])

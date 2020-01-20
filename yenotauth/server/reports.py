@@ -1,4 +1,4 @@
-from bottle import request, response
+from bottle import request
 import yenot.backend.api as api
 import yenotauth.core
 

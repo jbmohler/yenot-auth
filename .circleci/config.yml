@@ -1,0 +1,71 @@
+# Python CircleCI 2.0 configuration file
+#
+# Check https://circleci.com/docs/2.0/language-python/ for more details
+#
+version: 2
+jobs:
+  smoke-test:
+    docker:
+      - image: circleci/python:3.7.5
+
+    working_directory: ~/repo
+
+    steps:
+      - checkout
+
+      - run:
+          name: install dependencies
+          command: |
+            python3 -m venv ~/venv
+            . ~/venv/bin/activate
+            pip install --upgrade pip
+            git clone https://github.com/jbmohler/yenot.git ~/yenot
+            pip install -r ~/yenot/requirements.txt
+            pip install -e ~/yenot
+            pip install -r requirements.txt
+            pip install -e .
+
+      - run:
+          name: run top level import
+          command: |
+            . ~/venv/bin/activate
+            python -c "import yenotauth; print(yenotauth.__path__)"
+
+  code-quality:
+    docker:
+      # specify the version you desire here
+      - image: circleci/python:3.7.5
+
+    working_directory: ~/repo
+
+    steps:
+      - checkout
+      - run:
+          name: install dependencies
+          command: |
+            python3 -m venv ~/venv
+            . ~/venv/bin/activate
+            pip install --upgrade pip
+            pip install black
+            pip install flake8
+
+      - run:
+          name: code format check (black)
+          command: |
+            . ~/venv/bin/activate
+            cd ~/repo
+            git ls-files '*.py' | xargs black --check
+
+      - run:
+          name: code semantics check (flake8)
+          command: |
+            . ~/venv/bin/activate
+            cd ~/repo
+            git ls-files '*.py' | xargs flake8
+
+workflows:
+  version: 2
+  all-checks:
+    jobs:
+      - smoke-test
+      - code-quality
