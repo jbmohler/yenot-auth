@@ -9,6 +9,6 @@ setup(
     author="Joel B. Mohler",
     author_email="joel@kiwistrawberry.us",
     url="https://bitbucket.org/jbmohler/yenot-auth",
-    packages=["yenotauth"],
+    packages=["yenotauth", "yenotauth.server"],
     install_requires=["yenot", "bcrypt"],
 )
