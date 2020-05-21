@@ -56,12 +56,18 @@ def get_api_endpoints():
 
 class ReportMetaXformer:
     def __init__(self, epname):
-        self.routes = {r.name: r for r in app.routes if r.name == epname}
+        self.routes = {
+            r.name: r for r in app.routes if r.name == epname or epname == None
+        }
 
     def xform(self, oldrow, row):
-        row.url = self.routes[row.name].rule[1:]
-        row.prompts = yenotauth.core.route_prompts(self.routes[row.name])
-        row.sidebars = yenotauth.core.route_sidebars(self.routes[row.name])
+        route = self.routes.get(row.act_name, None)
+        if route is None:
+            return
+
+        row.url = route.rule[1:]
+        row.prompts = yenotauth.core.route_prompts(route)
+        row.sidebars = yenotauth.core.route_sidebars(route)
 
 
 @app.get("/api/report/<name>/runmeta", name="api_report_runmeta")
@@ -102,9 +108,11 @@ where name=%(n)s
 @app.get("/api/report/<name>/info", name="api_report_info")
 def api_report_info(name):
     select = """
-select autoid, name, description, url, note, technical
+select 
+    id, act_name, description, url, 
+    note --, technical
 from activities
-where name=%(n)s
+where act_name=%(n)s
 """
 
     results = api.Results()

@@ -759,7 +759,26 @@ from activities
 
     results = api.Results()
     with app.dbconn() as conn:
-        results.tables["activities", True] = api.sql_tab2(conn, select, None, cm)
+        rawdata = api.sql_tab2(conn, select, None, cm)
+
+        from . import endpoints
+
+        xform = endpoints.ReportMetaXformer(None)
+        columns = api.tab2_columns_transform(
+            rawdata[0], insert=[("url", "method", "title", "prompts", "sidebars")]
+        )
+
+        def xform_squared(oldrow, row):
+            if row.act_name in xform.routes:
+                row.method = xform.routes[row.act_name].method
+                if "report_title" in xform.routes[row.act_name].config:
+                    row.title = xform.routes[row.act_name].config["report_title"]
+
+            xform.xform(oldrow, row)
+
+        rows = api.tab2_rows_transform(rawdata, columns, xform_squared)
+
+        results.tables["activities", True] = columns, rows
     return results.json_out()
 
 

@@ -15,6 +15,10 @@ def route_prompts(r):
     return [] if "report_prompts" not in r.config else r.config["report_prompts"]()
 
 
+def route_sidebars(r):
+    return [] if "report_sidebars" not in r.config else r.config["report_sidebars"]()
+
+
 def endpoints(self):
     kls_endpoint = rtlib.fixedrecord("Endpoint", ["method", "url", "name", "config"])
     destinations = [r for r in self.routes]
