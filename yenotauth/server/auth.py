@@ -23,6 +23,23 @@ where sessions.id=%(sid)s and roleactivities.permitted
 """
 
 
+def user_sidebar(idcolumn):
+    return [{"name": "user_general", "on_highlight_row": {"id": idcolumn}}]
+
+
+def role_sidebar(idcolumn):
+    return [{"name": "role_general", "on_highlight_row": {"id": idcolumn}}]
+
+
+def activity_sidebar(idcolumn, namecolumn):
+    return [
+        {
+            "name": "activity_general",
+            "on_highlight_row": {"id": idcolumn, "act_name": namecolumn},
+        }
+    ]
+
+
 @app.put("/api/user/<userid>", name="put_api_user")
 @app.post("/api/user", name="post_api_user")
 def post_api_user(userid=None):
@@ -448,6 +465,7 @@ def get_users_prompts():
     name="get_api_users_list",
     report_title="User List",
     report_prompts=get_users_prompts,
+    report_sidebars=user_sidebar("id"),
 )
 def get_users():
     iinactive = api.parse_bool(request.params.get("include_inactive", False))
@@ -502,6 +520,7 @@ order by users.username
     "/api/users/lastlogin",
     name="api_users_lastlogin",
     report_title="User List by Last Login",
+    report_sidebars=user_sidebar("id"),
 )
 def get_users_lastlogin():
     select = """
@@ -623,7 +642,12 @@ where roles.id=%(r)s
     return results.json_out()
 
 
-@app.get("/api/roles/list", name="get_api_roles_list", report_title="Role List")
+@app.get(
+    "/api/roles/list",
+    name="get_api_roles_list",
+    report_title="Role List",
+    report_sidebars=role_sidebar("id"),
+)
 def get_api_roles_list():
     select = """
 select roles.id, roles.role_name, userroles2.count
@@ -647,7 +671,7 @@ left outer join (
         "count": {"label": "Users"},
     }
 
-    results = api.Results()
+    results = api.Results(default_title=True)
     with app.dbconn() as conn:
         results.tables["roles", True] = api.sql_tab2(conn, select, None, cm)
     return results.json_out()
@@ -743,7 +767,10 @@ delete from roles where id=%(r)s;
 
 
 @app.get(
-    "/api/activities/list", name="get_api_activities_list", report_title="Activity List"
+    "/api/activities/list",
+    name="get_api_activities_list",
+    report_title="Activity List",
+    report_sidebars=activity_sidebar("id", "act_name"),
 )
 def get_api_activities_list():
     select = """
@@ -757,7 +784,7 @@ from activities
         "count": {"label": "Users"},
     }
 
-    results = api.Results()
+    results = api.Results(default_title=True)
     with app.dbconn() as conn:
         rawdata = api.sql_tab2(conn, select, None, cm)
 

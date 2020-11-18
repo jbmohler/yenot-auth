@@ -16,7 +16,7 @@ def route_prompts(r):
 
 
 def route_sidebars(r):
-    return [] if "report_sidebars" not in r.config else r.config["report_sidebars"]()
+    return [] if "report_sidebars" not in r.config else r.config["report_sidebars"]
 
 
 def endpoints(self):

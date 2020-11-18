@@ -43,10 +43,13 @@ where roleactivities.permitted /*WHERE*/"""
         reports = {r.name: r for r in app.report_endpoints()}
         data = data[0], [r for r in data[1] if r.act_name in reports]
 
-        columns = api.tab2_columns_transform(data[0], insert=[("id", "prompts")])
+        columns = api.tab2_columns_transform(
+            data[0], insert=[("id", "prompts", "sidebars")]
+        )
 
         def xform_add_prompts(oldrow, row):
             row.prompts = yenotauth.core.route_prompts(reports[row.act_name])
+            row.sidebars = yenotauth.core.route_sidebars(reports[row.act_name])
 
         rows = api.tab2_rows_transform(data, columns, xform_add_prompts)
 

@@ -127,8 +127,8 @@ where act_name=%(n)s
         def xform_squared(oldrow, row):
             if name in xform.routes:
                 row.method = xform.routes[name].method
-            if "report_title" in xform.routes[name].config:
-                row.title = xform.routes[name].config["report_title"]
+                if "report_title" in xform.routes[name].config:
+                    row.title = xform.routes[name].config["report_title"]
 
             xform.xform(oldrow, row)
 
