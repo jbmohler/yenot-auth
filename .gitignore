@@ -1,5 +1,6 @@
 *.swp
 *.egg-info
+venv
 .coverage
 .pytest_cache
 __pycache__

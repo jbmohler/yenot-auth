@@ -1,7 +1,11 @@
 #!in/sh
 
-export YENOT_PORT=18018
-export YENOT_DB_URL=postgresql:///my_coverage_test
+if [ -z "$YENOT_PORT" ]; then
+	export YENOT_PORT=18018
+fi
+if [ -z "$YENOT_DB_URL" ]; then
+	export YENOT_DB_URL=postgresql:///my_coverage_test
+fi
 export INIT_DB_PASSWD=123admin-test123
 
 rm -rf .coverage
