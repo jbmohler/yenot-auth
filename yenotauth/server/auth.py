@@ -905,7 +905,7 @@ from activities
             rawdata[0], insert=[("url", "method", "title", "prompts", "sidebars")]
         )
 
-        def xform_squared(oldrow, row):
+        def xform_rptmeta(oldrow, row):
             if row.act_name in xform.routes:
                 row.method = xform.routes[row.act_name].method
                 if "report_title" in xform.routes[row.act_name].config:
@@ -913,7 +913,7 @@ from activities
 
             xform.xform(oldrow, row)
 
-        rows = api.tab2_rows_transform(rawdata, columns, xform_squared)
+        rows = api.tab2_rows_transform(rawdata, columns, xform_rptmeta)
 
         results.tables["activities", True] = columns, rows
     return results.json_out()

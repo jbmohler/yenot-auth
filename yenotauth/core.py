@@ -56,9 +56,9 @@ join userroles on userroles.userid=sessions.userid
 join roleactivities on roleactivities.roleid=userroles.roleid
 join activities on activities.id=roleactivities.activityid
 join roles on roles.id=userroles.roleid
-where sessions.id=%(sid)s 
+where sessions.id=%(sid)s
     and not sessions.inactive
-    and activities.act_name=%(act)s 
+    and activities.act_name=%(act)s
     and roleactivities.permitted
 """
 
