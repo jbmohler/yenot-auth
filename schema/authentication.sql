@@ -41,10 +41,21 @@ create table activities (
   note text
 );
 
+create table devicetokens (
+  id character(32) primary key,
+  userid uuid references users(id) not null,
+  device_name text,
+  tokenhash varchar(60) CHECK (tokenhash ~ '^[\x21-\x7F]*$'),
+  issued timestamp without time zone not null,
+  inactive boolean not null default false,
+  expires timestamp without time zone not null
+);
+
 create table sessions (
   id character(24) primary key,
-  userid uuid references users(id),
+  userid uuid references users(id) not null,
   ipaddress character varying(45),
+  devtok_id character(32) references devicetokens(id),
   refreshed timestamp without time zone not null,
   inactive boolean not null default false,
   pin_2fa char(6)

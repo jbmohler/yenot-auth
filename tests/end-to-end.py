@@ -93,8 +93,12 @@ class YASession(yclient.YenotSession):
         self.headers["X-Yenot-SessionId"] = self.yenot_sid
         return True
 
-    def authenticate(self, username, password):
-        p = {"username": username, "password": password}
+    def authenticate(self, username, password=None, device_token=None):
+        p = {"username": username}
+        if password:
+            p["password"] = password
+        if device_token:
+            p["device_token"] = device_token
         try:
             r = self.post(self.prefix("api/session"), data=p)
         except requests.ConnectionError:
@@ -223,6 +227,78 @@ def test_authorize_remainder(srvparams):
         client.get("api/user/logged-in/reports")
 
         session.close()
+
+
+def test_device_tokens(srvparams):
+    with yenot.tests.server_running(**srvparams) as server:
+        session = YASession(server.url)
+        session.authenticate("admin", os.environ["INIT_DB_PASSWD"])
+
+        client = session.std_client()
+
+        # get my user
+        content = client.get("api/users/list")
+        admin = [
+            user for user in content.main_table().rows if user.username == "ADMIN"
+        ][0]
+
+        # set up and test a first device token
+        devcontent1 = client.post(
+            "api/user/{}/device-token/new",
+            admin.id,
+            device_name="computer1",
+            expdays=366,
+        )
+        devtoken1 = devcontent1.main_table().rows[0]
+
+        session1 = YASession(server.url)
+        client1 = session1.std_client()
+
+        # try & fail on this new session1 to test auth
+        error = False
+        try:
+            client1.get("api/role/new")
+        except yclient.YenotServerError as e:
+            error = True
+            assert e.status_code == 401
+        assert error
+
+        session1.authenticate("admin", device_token=devtoken1.token)
+
+        client1.get("api/role/new")
+
+        # set up and test a second device token
+        devcontent2 = client.post(
+            "api/user/{}/device-token/new",
+            admin.id,
+            device_name="computer2",
+            expires=366,
+        )
+        devtoken2 = devcontent2.main_table().rows[0]
+
+        session2 = YASession(server.url)
+        client2 = session2.std_client()
+
+        session2.authenticate("admin", device_token=devtoken2.token)
+
+        client2.get("api/role/new")
+
+        # see the list of device tokens in my user
+        content = client.get("api/user/{}", admin.id)
+        assert len(content.named_table("devicetokens").rows) == 2
+
+        client.delete("api/user/{}/device-token/{}", admin.id, devtoken1.id)
+
+        # try & fail on this revoked session1 to test auth
+        error = False
+        try:
+            client1.get("api/role/new")
+        except yclient.YenotServerError as e:
+            error = True
+            assert e.status_code == 401
+        assert error
+
+        client2.get("api/role/new")
 
 
 def test_crud_roles(srvparams):
@@ -411,6 +487,7 @@ if __name__ == "__main__":
     test_login_fail(srvparams)
     test_login(srvparams)
     test_authorize_remainder(srvparams)
+    test_device_tokens(srvparams)
     test_crud_roles(srvparams)
     test_crud_users(srvparams)
     test_crud_activities(srvparams)

@@ -10,6 +10,8 @@ PUBLIC_ACTS = ["api_session", "api_session_by_pin", "api_session_promote_2fa"]
 USER_ACTS = [
     "api_user_me_change_password",
     "api_user_me_change_pin",
+    "post_api_user_device_token_new",
+    "delete_api_user_device_token",
     "api_endpoints",
     "api_session_logout",
 ]
@@ -17,6 +19,7 @@ USER_ACTS = [
 SYS_ADMIN_ACTS = [
     "get_api_sessions_active",
     "get_api_users_list",
+    "get_api_user_record",
     "api_users_lastlogin",
     "get_api_roles_list",
     "get_api_role_new",

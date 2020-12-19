@@ -122,22 +122,29 @@ select users.id, users.username, full_name, descr,
     inactive,
     pinhash is not null as has_pin
 from users
-where users.id=%(r)s
+where users.id=%(uid)s
 """
 
-    cm = {
-        "id": {"type": "yenot_user.surrogate"},
-        "username": {
-            "label": "Role",
-            "type": "yenot_user.name",
-            "url_key": "id",
-            "represents": True,
-        },
-    }
+    selectdev = """
+select id, device_name, issued, expires
+from devicetokens
+where devicetokens.userid=%(uid)s"""
 
     results = api.Results()
     with app.dbconn() as conn:
-        results.tables["user", True] = api.sql_tab2(conn, select, {"r": userid}, cm)
+        cm = api.ColumnMap(
+            id=api.cgen.yenot_user.surrogate(),
+            username=api.cgen.yenot_user.name(url_key="id", represents=True),
+        )
+        results.tables["user", True] = api.sql_tab2(conn, select, {"uid": userid}, cm)
+
+        cm = api.ColumnMap(
+            id=api.cgen.device_token.surrogate(),
+            device_name=api.cgen.device_token.name(),
+        )
+        results.tables["devicetokens"] = api.sql_tab2(
+            conn, selectdev, {"uid": userid}, cm
+        )
     return results.json_out()
 
 
@@ -226,17 +233,44 @@ update users set pinhash=%(h)s, target_2fa=%(fa)s where id=%(i)s"""
 @app.post("/api/session", name="api_session", skip=["yenot-auth"])
 def api_session():
     username = request.forms.get("username")
-    password = request.forms.get("password")
+    password = request.forms.get("password", None)
+    device_token = request.forms.get("device_token", None)
     ip = request.environ.get("REMOTE_ADDR")
 
-    select = "select id, username, pwhash, inactive from users where username=%(uname)s"
+    if not password and not device_token:
+        raise api.UserError(
+            "required-param",
+            "You must specify either the user's password or a device token.",
+        )
+
+    select_user = "select id, username, pwhash as comphash, inactive from users where username=%(uname)s"
+    select_devtok = """
+select
+    users.id, users.username, users.inactive,
+    devicetokens.tokenhash as comphash, devicetokens.issued, devicetokens.expires
+from devicetokens
+join users on users.id=devicetokens.userid
+where
+    username=%(uname)s
+    and devicetokens.id=%(tokid)s
+    and not devicetokens.inactive
+    and devicetokens.expires>current_timestamp"""
+
     sess_insert = """
-insert into sessions (id, userid, ipaddress, refreshed)
-values (%(sid)s, %(uid)s, %(ip)s, current_timestamp);"""
+insert into sessions (id, userid, ipaddress, devtok_id, refreshed)
+values (%(sid)s, %(uid)s, %(ip)s, %(tokid)s, current_timestamp);"""
 
     results = api.Results()
     with app.dbconn() as conn:
-        rows = api.sql_rows(conn, select, {"uname": username.upper()})
+        tokid = None
+        if password:
+            secret = password
+            rows = api.sql_rows(conn, select_user, {"uname": username.upper()})
+        elif device_token:
+            tokid, secret = decode_device_token(device_token)
+            rows = api.sql_rows(
+                conn, select_devtok, {"uname": username.upper(), "tokid": tokid}
+            )
 
         content = {}
 
@@ -247,9 +281,12 @@ values (%(sid)s, %(uid)s, %(ip)s, current_timestamp);"""
             content["status"] = "inactive"
             status = 210
         elif bcrypt.hashpw(
-            password.encode("utf8"), rows[0].pwhash.encode("utf8")
-        ) != rows[0].pwhash.encode("utf8"):
+            secret.encode("utf8"), rows[0].comphash.encode("utf8")
+        ) != rows[0].comphash.encode("utf8"):
             content["status"] = "incorrect password"
+            status = 210
+        elif device_token and rows[0].expires < datetime.datetime.utcnow():
+            content["status"] = "expired or unknown device token"
             status = 210
         else:
             content["status"] = "welcome {}".format(rows[0].username)
@@ -260,7 +297,7 @@ values (%(sid)s, %(uid)s, %(ip)s, current_timestamp);"""
             session = base64.b64encode(os.urandom(18)).decode("ascii")  # 24 characters
             assert len(session) == 24
             content["session"] = session
-            params = {"sid": session, "uid": rows[0].id, "ip": ip}
+            params = {"sid": session, "uid": rows[0].id, "ip": ip, "tokid": tokid}
             api.sql_void(conn, sess_insert, params)
             conn.commit()
 
@@ -424,6 +461,79 @@ update sessions set inactive=true where id=%(sid)s"""
 
     with app.dbconn() as conn:
         api.sql_void(conn, update, {"sid": session})
+        conn.commit()
+    return api.Results().json_out()
+
+
+def encode_device_token(tokid, secret):
+    return f"ydt{tokid}xx{secret}"
+
+
+def decode_device_token(devtoken):
+    if not devtoken.startswith("ydt"):
+        raise ValueError("a device token must have prefix 'ydt'.")
+    tokid, secret = devtoken[3:].split("xx")
+    return tokid, secret
+
+
+@app.post("/api/user/<userid>/device-token/new", name="post_api_user_device_token_new")
+def post_api_user_device_token_new(userid):
+    device_name = request.params.get("device_name", None)
+    expdays = int(request.params.get("expdays", 30))
+
+    insert = """
+insert into devicetokens (id, userid, device_name, tokenhash, issued, expires)
+values (
+    %(id)s, %(uid)s, %(dn)s,
+    %(tokhash)s,
+    current_timestamp, current_timestamp+(interval '1 day')*%(exp)s)
+"""
+
+    select = """
+select id, userid, device_name, issued, expires, null::text as token
+from devicetokens
+where id=%(dtid)s"""
+
+    dtid = "".join([f"{random.randrange(0, 2**16):04x}" for _ in range(8)])
+    secret = "".join([f"{random.randrange(0, 2**16):04x}" for _ in range(8)])
+    hashed = bcrypt.hashpw(secret.encode("utf8"), bcrypt.gensalt())
+    hashed = hashed.decode("ascii")
+
+    params = {
+        "id": dtid,
+        "uid": userid,
+        "dn": device_name,
+        "tokhash": hashed,
+        "exp": expdays,
+    }
+
+    results = api.Results()
+    with app.dbconn() as conn:
+        api.sql_void(conn, insert, params)
+        conn.commit()
+
+        columns, rows = api.sql_tab2(conn, select, {"dtid": dtid})
+
+        def xform_token(oldrow, row):
+            row.token = encode_device_token(dtid, secret)
+
+        rows = api.tab2_rows_transform((columns, rows), columns, xform_token)
+        results.tables["device_token", True] = columns, rows
+    return results.json_out()
+
+
+@app.delete(
+    "/api/user/<userid>/device-token/<devid>", name="delete_api_user_device_token"
+)
+def delete_api_user_device_token(userid, devid):
+    delete = """
+update devicetokens set inactive=true
+where userid=%(userid)s and id=%(devid)s;
+update sessions set inactive=true
+where devtok_id=%(devid)s;"""
+
+    with app.dbconn() as conn:
+        api.sql_void(conn, delete, {"userid": userid, "devid": devid})
         conn.commit()
     return api.Results().json_out()
 
