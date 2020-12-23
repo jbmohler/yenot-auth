@@ -303,6 +303,8 @@ values (%(sid)s, %(uid)s, %(ip)s, %(tokid)s, current_timestamp);"""
 
             capabilities = api.sql_tab2(conn, CAPS_SELECT, {"sid": session})
 
+            content["userid"] = rows[0].id
+            content["username"] = rows[0].username
             content["capabilities"] = capabilities
 
         results.keys.update(content)
@@ -545,9 +547,11 @@ where devtok_id=%(devid)s;"""
 )
 def get_api_sessions_active():
     select = """
-select users.id, users.username, sessions.ipaddress, sessions.refreshed
+select users.id, users.username, sessions.ipaddress, sessions.refreshed,
+    devicetokens.device_name
 from sessions
 join users on users.id=sessions.userid
+left outer join devicetokens on devicetokens.id=sessions.devtok_id
 where not sessions.inactive
 """
 
