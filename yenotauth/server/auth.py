@@ -557,21 +557,21 @@ where not sessions.inactive
 
     results = api.Results(default_title=True)
     with app.dbconn() as conn:
-        cm = {
-            "id": {"type": "yenot_user.surrogate"},
-            "username": {"type": "yenot_user.name", "url_key": "id"},
-            "ipaddress": {"label": "IP Address"},
-        }
+        cm = api.ColumnMap(
+            id=api.cgen.yenot_user.surrogate(),
+            username=api.cgen.yenot_user.name(url_key="id"),
+            ipaddress=api.cgen.auto(label="IP Address"),
+        )
         results.tables["sessions", True] = api.sql_tab2(conn, select, None, cm)
     return results.json_out()
 
 
 def get_users_prompts():
-    cm = {
-        "include_inactive": {"type": "boolean", "default": False},
-        "userrole": {"label": "Role", "type": "yenot_role.surrogate"},
-    }
-    return [(a, cm.get(a, None)) for a in ["include_inactive", "userrole"]]
+    return api.PromptList(
+        include_inactive=api.cgen.boolean(default=False),
+        userrole=api.cgen.yenot_role.surrogate(label="Role"),
+        __order__=["include_inactive", "userrole"],
+    )
 
 
 @app.get(
@@ -617,15 +617,12 @@ order by users.username
 
     results = api.Results(default_title=True)
     with app.dbconn() as conn:
-        cm = {
-            "id": {"type": "yenot_user.surrogate"},
-            "username": {
-                "type": "yenot_user.name",
-                "url_key": "id",
-                "represents": True,
-            },
-            "count": {"label": "Active Sessions"},
-        }
+        cm = api.ColumnMap(
+            id=api.cgen.yenot_user.surrogate(),
+            username=api.cgen.yenot_user.name(url_key="id", represents=True),
+            count=api.cgen.auto(label="Active Sessions"),
+        )
+
         results.tables["users", True] = api.sql_tab2(conn, select, params, cm)
     return results.json_out()
 
@@ -654,16 +651,12 @@ order by users.username"""
 
     results = api.Results(default_title=True)
     with app.dbconn() as conn:
-        cm = {
-            "id": {"type": "yenot_user.surrogate"},
-            "username": {
-                "type": "yenot_user.name",
-                "url_key": "id",
-                "represents": True,
-            },
-            "ipaddress": {"label": "IP Address"},
-            "active_count": {"label": "Active Sessions"},
-        }
+        cm = api.ColumnMap(
+            id=api.cgen.yenot_user.surrogate(),
+            username=api.cgen.yenot_user.name(url_key="id", represents=True),
+            ipaddress=api.cgen.auto(label="IP Address"),
+            active_count=api.cgen.auto(label="Active Sessions"),
+        )
         results.tables["logins", True] = api.sql_tab2(conn, select, column_map=cm)
     return results.json_out()
 
@@ -692,16 +685,13 @@ where roles.id=%(r)s
 
     results = api.Results()
     with app.dbconn() as conn:
-        cm = {
-            "id": {"type": "yenot_role.surrogate"},
-            "username": {
-                "label": "Role",
-                "type": "yenot_role.name",
-                "url_key": "id",
-                "represents": True,
-            },
-            "full_namel": {"label": "Activities"},
-        }
+        cm = api.ColumnMap(
+            id=api.cgen.yenot_activity.surrogate(),
+            act_name=api.cgen.yenot_activity.name(
+                label="Activity", url_key="id", represents=True
+            ),
+            url=api.cgen.auto(label="URL"),
+        )
 
         results.tables["activities", True] = api.sql_tab2(
             conn, select, {"r": role_id}, cm
@@ -737,16 +727,12 @@ where roles.id=%(r)s
 
     results = api.Results()
     with app.dbconn() as conn:
-        cm = {
-            "id": {"type": "yenot_role.surrogate"},
-            "username": {
-                "label": "Role",
-                "type": "yenot_role.name",
-                "url_key": "id",
-                "represents": True,
-            },
-            "full_namel": {"label": "Users"},
-        }
+        cm = api.ColumnMap(
+            id=api.cgen.yenot_role.surrogate(),
+            username=api.cgen.yenot_role.name(
+                label="Login Name", url_key="id", represents=True
+            ),
+        )
 
         results.tables["users", True] = api.sql_tab2(conn, select, {"r": role_id}, cm)
 
@@ -774,19 +760,15 @@ left outer join (
 --order by roles.sort
 """
 
-    cm = {
-        "id": {"type": "yenot_role.surrogate"},
-        "role_name": {
-            "label": "Role",
-            "type": "yenot_role.name",
-            "url_key": "id",
-            "represents": True,
-        },
-        "count": {"label": "Users"},
-    }
-
     results = api.Results(default_title=True)
     with app.dbconn() as conn:
+        cm = api.ColumnMap(
+            id=api.cgen.yenot_role.surrogate(),
+            role_name=api.cgen.yenot_role.name(
+                label="Role", url_key="id", represents=True
+            ),
+            count=api.cgen.auto(label="Users"),
+        )
         results.tables["roles", True] = api.sql_tab2(conn, select, None, cm)
     return results.json_out()
 
@@ -799,18 +781,14 @@ from roles
 where false
 """
 
-    cm = {
-        "id": {"type": "yenot_role.surrogate"},
-        "role_name": {
-            "label": "Role",
-            "type": "yenot_role.name",
-            "url_key": "id",
-            "represents": True,
-        },
-    }
-
     results = api.Results()
     with app.dbconn() as conn:
+        cm = api.ColumnMap(
+            id=api.cgen.yenot_role.surrogate(),
+            role_name=api.cgen.yenot_role.name(
+                label="Role", url_key="id", represents=True
+            ),
+        )
         cols, rows = api.sql_tab2(conn, select, None, cm)
 
         def default_row(index, row):
@@ -829,18 +807,15 @@ from roles
 where roles.id=%(r)s
 """
 
-    cm = {
-        "id": {"type": "yenot_role.surrogate"},
-        "role_name": {
-            "label": "Role",
-            "type": "yenot_role.name",
-            "url_key": "id",
-            "represents": True,
-        },
-    }
-
     results = api.Results()
     with app.dbconn() as conn:
+        cm = api.ColumnMap(
+            id=api.cgen.yenot_role.surrogate(),
+            role_name=api.cgen.yenot_role.name(
+                label="Role", url_key="id", represents=True
+            ),
+        )
+
         results.tables["role", True] = api.sql_tab2(conn, select, {"r": roleid}, cm)
     return results.json_out()
 
@@ -892,14 +867,16 @@ select activities.id, activities.act_name, activities.description, activities.ur
 from activities
 """
 
-    cm = {
-        "id": {"type": "yenot_role.surrogate"},
-        "name": {"type": "yenot_role.name", "url_key": "id", "represents": True},
-        "count": {"label": "Users"},
-    }
-
     results = api.Results(default_title=True)
     with app.dbconn() as conn:
+        cm = api.ColumnMap(
+            id=api.cgen.yenot_activity.surrogate(),
+            act_name=api.cgen.yenot_activity.name(
+                label="Activity Name", url_key="id", represents=True
+            ),
+            url=api.cgen.auto(label="URL"),
+        )
+
         rawdata = api.sql_tab2(conn, select, None, cm)
 
         from . import endpoints
@@ -951,18 +928,15 @@ from activities
 where activities.id=%(r)s
 """
 
-    cm = {
-        "id": {"type": "yenot_activity.surrogate"},
-        "act_name": {
-            "label": "Activity",
-            "type": "yenot_activity.name",
-            "url_key": "id",
-            "represents": True,
-        },
-    }
-
     results = api.Results()
     with app.dbconn() as conn:
+        cm = api.ColumnMap(
+            id=api.cgen.yenot_activity.surrogate(),
+            act_name=api.cgen.yenot_activity.name(
+                label="Activity", url_key="id", represents=True
+            ),
+        )
+
         results.tables["activity", True] = api.sql_tab2(
             conn, select, {"r": activityid}, cm
         )
@@ -1013,14 +987,11 @@ where users.id in (select userid from users_universe)"""
 
     results = api.Results()
     with app.dbconn() as conn:
-        cm = {
-            "id": {"type": "yenot_role.surrogate"},
-            "role_name": {
-                "type": "yenot_role.name",
-                "url_key": "id",
-                "represents": True,
-            },
-        }
+        cm = api.ColumnMap(
+            id=api.cgen.yenot_role.surrogate(),
+            role_name=api.cgen.yenot_role.name(url_key="id", represents=True),
+        )
+
         p = {"users": users}
         results.tables["users", True] = api.sql_tab2(conn, select, p, cm)
         results.tables["usernames"] = api.sql_tab2(conn, select2, p)
@@ -1104,14 +1075,11 @@ where roles.id in (select roleid from roles_universe)"""
     results = api.Results()
     results.key_labels += "Users for Role(s)"
     with app.dbconn() as conn:
-        cm = {
-            "id": {"type": "yenot_user.surrogate"},
-            "username": {
-                "type": "yenot_user.name",
-                "url_key": "id",
-                "represents": True,
-            },
-        }
+        cm = api.ColumnMap(
+            id=api.cgen.yenot_user.surrogate(),
+            username=api.cgen.yenot_user.name(url_key="id", represents=True),
+        )
+
         p = {"roles": roles}
         results.tables["users", True] = api.sql_tab2(conn, select, p, cm)
         results.tables["rolenames"] = api.sql_tab2(conn, select2, p)
@@ -1196,15 +1164,13 @@ from roles join roles_universe on roles_universe.roleid=roles.id"""
     results = api.Results()
     results.key_labels += "Activities for Role(s)"
     with app.dbconn() as conn:
-        cm = {
-            "id": {"type": "yenot_activity.surrogate"},
-            "name": {
-                "label": "Activity",
-                "type": "yenot_activity.name",
-                "url_key": "id",
-                "represents": True,
-            },
-        }
+        cm = api.ColumnMap(
+            id=api.cgen.yenot_activity.surrogate(),
+            act_name=api.cgen.yenot_activity.name(
+                label="Activity", url_key="id", represents=True
+            ),
+        )
+
         p = {"roles": roles}
         results.tables["activities", True] = api.sql_tab2(conn, select, p, cm)
         results.tables["rolenames"] = api.sql_tab2(conn, select2, p)
