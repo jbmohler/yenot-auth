@@ -115,8 +115,20 @@ from unnest(%(roles)s) rl"""
     return api.Results().json_out()
 
 
+@app.get("/api/user/me", name="get_api_user_me_record")
+def get_api_user_record_me():
+    with app.dbconn() as conn:
+        active = api.active_user(conn)
+
+    return _get_api_user_record(active.id)
+
+
 @app.get("/api/user/<userid>", name="get_api_user_record")
 def get_api_user_record(userid):
+    return _get_api_user_record(userid)
+
+
+def _get_api_user_record(userid):
     select = """
 select users.id, users.username, full_name, descr,
     inactive,
