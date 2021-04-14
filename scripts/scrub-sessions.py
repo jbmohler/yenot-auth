@@ -10,6 +10,7 @@ where refreshed < current_timestamp - interval '14 days'
 returning *
 """
 
+
 def main():
     conn = yenot.backend.create_connection(os.environ["LMS_PROD_DB"])
 
@@ -21,5 +22,6 @@ def main():
 
     requests.get("https://hc-ping.com/12a5fa9a-79ee-4afe-9f9b-acc8e03eecc6")
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()
