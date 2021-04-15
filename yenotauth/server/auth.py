@@ -137,10 +137,30 @@ from users
 where users.id=%(uid)s
 """
 
+    selectroles = """
+select roles.id, roles.role_name, roles.sort
+from roles
+where roles.id in (
+        select userroles.roleid from userroles where userroles.userid=%(uid)s
+        )
+order by roles.sort, roles.role_name;
+"""
+
     selectdev = """
-select id, device_name, issued, expires
+select
+    devicetokens.id, devicetokens.device_name,
+    devicetokens.issued, devicetokens.expires,
+    x.last_session_refresh
 from devicetokens
-where devicetokens.userid=%(uid)s"""
+left outer join lateral (
+    select devicetokens.id, sessions.refreshed as last_session_refresh
+    from devicetokens
+    join sessions on sessions.devtok_id=devicetokens.id
+    left outer join sessions s2 on s2.devtok_id=devicetokens.id and s2.refreshed > sessions.refreshed
+    where s2.devtok_id is null
+    ) x on x.id=devicetokens.id
+where devicetokens.userid=%(uid)s
+"""
 
     results = api.Results()
     with app.dbconn() as conn:
@@ -149,6 +169,14 @@ where devicetokens.userid=%(uid)s"""
             username=api.cgen.yenot_user.name(url_key="id", represents=True),
         )
         results.tables["user", True] = api.sql_tab2(conn, select, {"uid": userid}, cm)
+
+        cm = api.ColumnMap(
+            id=api.cgen.yenot_role.surrogate(),
+            role_name=api.cgen.yenot_role.name(
+                label="Role", url_key="id", represents=True
+            ),
+        )
+        results.tables["roles"] = api.sql_tab2(conn, selectroles, {"uid": userid}, cm)
 
         cm = api.ColumnMap(
             id=api.cgen.device_token.surrogate(),
@@ -740,8 +768,8 @@ where roles.id=%(r)s
     results = api.Results()
     with app.dbconn() as conn:
         cm = api.ColumnMap(
-            id=api.cgen.yenot_role.surrogate(),
-            username=api.cgen.yenot_role.name(
+            id=api.cgen.yenot_user.surrogate(),
+            username=api.cgen.yenot_user.name(
                 label="Login Name", url_key="id", represents=True
             ),
         )
