@@ -6,9 +6,8 @@ a basic declarative data structure for describing an end-point to the client.
 # Authentication
 
 Provides a user add/remove and authentication end-point.  Individual requests
-are authenticated with a token passed in the X-Yenot-SessionID header
-(essentially a bearer token).  This is to be extended with device tokens and
-rotating refresh tokens.
+are authenticated with a bearer token.  Device tokens are currently supported
+and rotating refresh tokens are likely coming soon.
 
 # Permissions & Roles
 

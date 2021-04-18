@@ -28,7 +28,7 @@ where roleactivities.permitted /*WHERE*/"""
             wheres.append(
                 "userroles.userid = (select userid from sessions where sessions.id=%(sid)s)"
             )
-            params["sid"] = request.headers["X-Yenot-SessionID"]
+            params["sid"] = yenotauth.core.request_session_id()
         else:
             wheres.append("userroles.userid = %(uid)s")
             params["uid"] = userid

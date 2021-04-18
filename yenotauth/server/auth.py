@@ -9,6 +9,7 @@ import psycopg2.extras
 from bottle import request, response
 import rtlib
 import yenot.backend.api as api
+import yenotauth.core
 
 app = api.get_global_app()
 
@@ -216,7 +217,7 @@ select id, username, pwhash, inactive
 from users
 where id=(select userid from sessions where sessions.id=%(sid)s)"""
 
-    user = api.sql_1object(conn, select, {"sid": request.headers["X-Yenot-SessionID"]})
+    user = api.sql_1object(conn, select, {"sid": yenotauth.core.request_session_id()})
 
     if user == None:
         raise api.UserError(
@@ -343,6 +344,7 @@ values (%(sid)s, %(uid)s, %(ip)s, %(tokid)s, current_timestamp);"""
 
             capabilities = api.sql_tab2(conn, CAPS_SELECT, {"sid": session})
 
+            content["access_token"] = yenotauth.core.session_token(session, rows[0].id)
             content["userid"] = rows[0].id
             content["username"] = rows[0].username
             content["capabilities"] = capabilities
@@ -442,7 +444,7 @@ values (%(sid)s, %(uid)s, %(ip)s, %(to)s, true, %(pin6)s);"""
     "/api/session/promote-2fa", name="api_session_promote_2fa", skip=["yenot-auth"]
 )
 def api_session_promote_2fa():
-    session = request.headers["X-Yenot-SessionID"]
+    session = yenotauth.core.request_session_id()
     pin2 = request.forms.get("pin2")
 
     ip = request.environ.get("REMOTE_ADDR")
@@ -496,7 +498,7 @@ values (%(sid)s, %(uid)s, %(ip)s, %(to)s);"""
 
 @app.put("/api/session/logout", name="api_session_logout")
 def api_session_logout():
-    session = request.headers["X-Yenot-SessionID"]
+    session = yenotauth.core.request_session_id()
 
     update = """
 update sessions set inactive=true where id=%(sid)s"""
