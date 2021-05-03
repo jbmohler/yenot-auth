@@ -38,7 +38,7 @@ def session_token(session, user_id):
         "sid": session,
         "sub": user_id,
         "iat": time.time(),
-        "exp": time.time() + 60 * 60 * 24,  # 24 hours
+        "exp": time.time() + 60 * 60,  # 1 hour
     }
 
     secret = os.environ["YENOT_AUTH_SIGNING_SECRET"]
@@ -58,9 +58,6 @@ def request_session_id():
             )
             sid = claims["sid"]
 
-    if sid == None:
-        sid = request.headers.get("X-Yenot-SessionID", None)
-
     return sid
 
 
@@ -74,17 +71,6 @@ def request_user_id(conn):
                 token, os.environ["YENOT_AUTH_SIGNING_SECRET"], algorithms=["HS256"]
             )
             return claims["sub"]
-
-    if "X-Yenot-SessionID" in request.headers:
-        sid = request.headers.get("X-Yenot-SessionID", None)
-
-        select = """
-select userid
-from sessions
-where sessions.id=%(sid)s
-"""
-
-        return api.sql_1row(conn, select, {"sid": sid})
 
     return None
 

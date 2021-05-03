@@ -398,6 +398,9 @@ values (%(sid)s, %(uid)s, %(ip)s, %(to)s, true, %(pin6)s);"""
             session = base64.b64encode(os.urandom(18)).decode("ascii")  # 24 characters
             assert len(session) == 24
             results.keys["session"] = session
+            results.keys["access_token"] = yenotauth.core.session_token(
+                session, rows[0].id
+            )
             params = {
                 "sid": session,
                 "uid": rows[0].id,
@@ -471,6 +474,9 @@ values (%(sid)s, %(uid)s, %(ip)s, %(to)s);"""
             session = base64.b64encode(os.urandom(18)).decode("ascii")  # 24 characters
             assert len(session) == 24
             results.keys["session"] = session
+            results.keys["access_token"] = yenotauth.core.session_token(
+                session, sessrow.id
+            )
             api.sql_void(
                 conn,
                 sess_insert,

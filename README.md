@@ -44,7 +44,7 @@ sleep 6
 # optionally check the PG version
 docker exec yenot-test-postgres psql -U postgres -h localhost -c "select version()"
 docker exec yenot-test-postgres createdb -U postgres -h localhost my_coverage_test
-YENOT_DEBUG=debug YENOT_REPO=../yenot YENOT_DB_URL=postgresql://postgres:mysecretpassword@localhost/my_coverage_test sh full-coverage.sh
+YENOT_DEBUG=debug YENOT_REPO=../yenot YENOT_DB_URL=postgresql://postgres:mysecretpassword@localhost/my_coverage_test YENOT_AUTH_SIGNING_SECRET=asdfg123456 sh full-coverage.sh
 # consider dropping the database before re-running the full-coverage test scripts
 docker exec yenot-test-postgres dropdb -U postgres -h localhost my_coverage_test
 docker stop yenot-test-postgres

@@ -20,7 +20,7 @@ def test_url(dbname):
 
 def init_database(dburl):
     r = os.system(
-        "{} ../yenot/scripts/init-database.py {} --full-recreate \
+        "{} ../yenot/scripts/init-database.py {} --db-reset \
             --ddl-script=schema/authentication.sql \
             --module=yenotauth.server --user=admin".format(
             sys.executable, dburl
@@ -59,7 +59,8 @@ class YASession(yclient.YenotSession):
 
         # success
         self.yenot_sid = payload.keys["session"]
-        self.headers["X-Yenot-SessionId"] = self.yenot_sid
+        self.access_token = payload.keys["access_token"]
+        self.headers["Authorization"] = f"Bearer {self.access_token}"
         return self.yenot_sid
 
     def authenticate_pin2(self, pin2):
@@ -89,8 +90,9 @@ class YASession(yclient.YenotSession):
 
         self.yenot_user = payload.keys["username"]
         self.yenot_sid = payload.keys["session"]
+        self.access_token = payload.keys["access_token"]
+        self.headers["Authorization"] = f"Bearer {self.access_token}"
         self._capabilities = payload.named_table("capabilities")
-        self.headers["X-Yenot-SessionId"] = self.yenot_sid
         return True
 
     def authenticate(self, username, password=None, device_token=None):
@@ -125,8 +127,9 @@ class YASession(yclient.YenotSession):
         # success
         self.yenot_user = username.upper()
         self.yenot_sid = payload.keys["session"]
+        self.access_token = payload.keys["access_token"]
+        self.headers["Authorization"] = f"Bearer {self.access_token}"
         self._capabilities = payload.named_table("capabilities")
-        self.headers["X-Yenot-SessionId"] = self.yenot_sid
         return True
 
     def close(self):

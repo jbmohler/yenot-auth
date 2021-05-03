@@ -12,6 +12,8 @@ def yenot_auth_app_init(app):
     app.install(core.YenotAuth())
 
     api.active_user = core.active_user
+    app.request_user_id = core.request_user_id
+    app.request_session_id = core.request_session_id
 
 
 def yenot_auth_data_init(conn, args):
