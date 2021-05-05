@@ -13,14 +13,15 @@ USER_ACTS = [
     "get_api_user_me_record",
     "post_api_user_device_token_new",
     "delete_api_user_device_token",
-    "api_endpoints",
     "api_session_logout",
+    "api_user_reports",
 ]
 
 SYS_ADMIN_ACTS = [
     "get_api_sessions_active",
     "get_api_users_list",
     "get_api_user_record",
+    "api_endpoints",
     "api_users_lastlogin",
     "get_api_roles_list",
     "get_api_role_new",
@@ -33,6 +34,8 @@ SYS_ADMIN_ACTS = [
     "delete_api_activity_record",
     "api_activities_by_role",
     "api_users_by_role",
+    "put_api_user",
+    "post_api_user",
     "get_api_userroles_by_users",
     "put_api_userroles_by_users",
     "get_api_userroles_by_roles",
