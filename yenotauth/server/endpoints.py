@@ -22,7 +22,11 @@ def get_api_endpoints_prompts():
 def get_api_endpoints():
     unregistered = api.parse_bool(request.query.get("unregistered", False))
 
-    cm = {}
+    cm = api.ColumnMap(
+        url=api.cgen.basic(label="URL"),
+        act_name=api.cgen.auto(label="Activity Name"),
+        description=api.cgen.auto(label="Title"),
+    )
     columns = [
         (a, cm.get(a, None)) for a in ["method", "url", "act_name", "description"]
     ]
