@@ -151,6 +151,7 @@ order by roles.sort, roles.role_name;
 select
     devicetokens.id, devicetokens.device_name,
     devicetokens.issued, devicetokens.expires,
+    devicetokens.expires<current_timestamp as expired,
     x.last_session_refresh
 from devicetokens
 left outer join lateral (
@@ -160,7 +161,7 @@ left outer join lateral (
     left outer join sessions s2 on s2.devtok_id=devicetokens.id and s2.refreshed > sessions.refreshed
     where s2.devtok_id is null
     ) x on x.id=devicetokens.id
-where devicetokens.userid=%(uid)s
+where devicetokens.userid=%(uid)s and devicetokens.expires>current_timestamp-interval '48 hours'
 """
 
     results = api.Results()
@@ -338,6 +339,7 @@ values (%(sid)s, %(uid)s, %(ip)s, %(tokid)s, current_timestamp);"""
             session = base64.b64encode(os.urandom(18)).decode("ascii")  # 24 characters
             assert len(session) == 24
             content["session"] = session
+            # TODO:  record the session expiration?
             params = {"sid": session, "uid": rows[0].id, "ip": ip, "tokid": tokid}
             api.sql_void(conn, sess_insert, params)
             conn.commit()
@@ -600,7 +602,7 @@ select users.id, users.username, sessions.ipaddress, sessions.refreshed,
 from sessions
 join users on users.id=sessions.userid
 left outer join devicetokens on devicetokens.id=sessions.devtok_id
-where not sessions.inactive
+where not sessions.inactive and sessions.refreshed>current_timestamp-interval '61 minutes'
 """
 
     results = api.Results(default_title=True)

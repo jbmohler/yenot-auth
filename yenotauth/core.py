@@ -97,6 +97,7 @@ def request_content_title(self):
 
 AUTH_SELECT = """
 select sessions.userid, sessions.inactive,
+    sessions.refreshed<current_timestamp-interval '60 minutes' as expired,
     activity.role_name, activity.description
 from sessions
 left outer join lateral (
@@ -124,6 +125,8 @@ def raise_unauthorized(app, routename, sid=None):
             raise HTTPError(401, "no current session found")
         elif len([r for r in rows if r.role_name is not None]) == 0:
             raise HTTPError(403, "Content forbidden")
+        elif rows[0].expired:
+            raise HTTPError(403, "Expired Session")
         else:
             request.route.config["_yenot_title_"] = rows[0].description
     return True
