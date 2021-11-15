@@ -21,8 +21,8 @@ def yenot_auth_data_init(conn, args):
 
     initdb.load_essentials(conn)
     if args.user != None:
-        if os.environ.get("INIT_DB_PASSWD", None) != None:
-            pw = os.environ["INIT_DB_PASSWD"]
+        if os.environ.get("INIT_DB_PASSWORD", None) != None:
+            pw = os.environ["INIT_DB_PASSWORD"]
         else:
             pw = getpass.getpass("Password for {}: ".format(args.user))
         initdb.create_yenot_user(conn, args.user, pw)

@@ -351,6 +351,10 @@ values (%(sid)s, %(uid)s, %(ip)s, %(tokid)s, current_timestamp);"""
             content["username"] = rows[0].username
             content["capabilities"] = capabilities
 
+            # TODO set expiration to match token expiration
+            # hmm, but then how to do the auto renewal?
+            response.set_cookie("YenotToken", content["access_token"], httponly=True)
+
         results.keys.update(content)
 
     response.status = status

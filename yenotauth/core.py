@@ -45,32 +45,42 @@ def session_token(session, user_id):
     return jose.jwt.encode(token_claims, secret, algorithm="HS256")
 
 
-def request_session_id():
-    sid = None
+def request_token():
+    token = None
 
     if "Authorization" in request.headers:
         bearer = request.headers["Authorization"]
         if bearer.startswith("Bearer "):
             token = bearer[7:].strip()
 
-            claims = jose.jwt.decode(
-                token, os.environ["YENOT_AUTH_SIGNING_SECRET"], algorithms=["HS256"]
-            )
-            sid = claims["sid"]
+    if "YenotToken" in request.cookies:
+        token = request.cookies.get("YenotToken")
+
+    return token
+
+
+def request_session_id():
+    sid = None
+
+    token = request_token()
+
+    if token:
+        claims = jose.jwt.decode(
+            token, os.environ["YENOT_AUTH_SIGNING_SECRET"], algorithms=["HS256"]
+        )
+        sid = claims["sid"]
 
     return sid
 
 
 def request_user_id(conn):
-    if "Authorization" in request.headers:
-        bearer = request.headers["Authorization"]
-        if bearer.startswith("Bearer "):
-            token = bearer[7:].strip()
+    token = request_token()
 
-            claims = jose.jwt.decode(
-                token, os.environ["YENOT_AUTH_SIGNING_SECRET"], algorithms=["HS256"]
-            )
-            return claims["sub"]
+    if token:
+        claims = jose.jwt.decode(
+            token, os.environ["YENOT_AUTH_SIGNING_SECRET"], algorithms=["HS256"]
+        )
+        return claims["sub"]
 
     return None
 
