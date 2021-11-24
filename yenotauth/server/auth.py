@@ -126,14 +126,15 @@ def get_api_user_record_me():
 
 @app.get("/api/user/<userid>", name="get_api_user_record")
 def get_api_user_record(userid):
-    return _get_api_user_record(userid)
+    return _get_api_user_record(userid if userid != "new" else None)
 
 
 def _get_api_user_record(userid):
     select = """
 select users.id, users.username, full_name, descr,
     inactive,
-    pinhash is not null as has_pin
+    pinhash is not null as has_pin,
+    null as password
 from users
 where users.id=%(uid)s
 """
@@ -169,8 +170,18 @@ where devicetokens.userid=%(uid)s and devicetokens.expires>current_timestamp-int
         cm = api.ColumnMap(
             id=api.cgen.yenot_user.surrogate(),
             username=api.cgen.yenot_user.name(url_key="id", represents=True),
+            has_pin=api.cgen.auto(skip_write=True),
+            password=api.cgen.auto(skip_write=userid != None),
         )
-        results.tables["user", True] = api.sql_tab2(conn, select, {"uid": userid}, cm)
+        cols, rows = api.sql_tab2(conn, select, {"uid": userid}, cm)
+
+        if userid == None:
+
+            def default_row(index, row):
+                row.id = str(uuid.uuid1())
+
+            rows = api.tab2_rows_default(cols, [None], default_row)
+        results.tables["user", True] = cols, rows
 
         cm = api.ColumnMap(
             id=api.cgen.yenot_role.surrogate(),
@@ -322,6 +333,9 @@ values (%(sid)s, %(uid)s, %(ip)s, %(tokid)s, current_timestamp);"""
         elif rows[0].inactive:
             content["status"] = "inactive"
             status = 210
+        elif not rows[0].comphash:
+            content["status"] = "incorrect password"
+            status = 210
         elif bcrypt.hashpw(
             secret.encode("utf8"), rows[0].comphash.encode("utf8")
         ) != rows[0].comphash.encode("utf8"):
@@ -331,7 +345,7 @@ values (%(sid)s, %(uid)s, %(ip)s, %(tokid)s, current_timestamp);"""
             content["status"] = "expired or unknown device token"
             status = 210
         else:
-            content["status"] = "welcome {}".format(rows[0].username)
+            content["status"] = f"welcome {rows[0].username}"
             status = 200
 
         if status == 200:
@@ -394,7 +408,7 @@ values (%(sid)s, %(uid)s, %(ip)s, %(to)s, true, %(pin6)s);"""
             results.keys["status"] = "incorrect pin"
             status = 210
         else:
-            results.keys["status"] = "welcome {}".format(rows[0].username)
+            results.keys["status"] = f"welcome {rows[0].username}"
             status = 200
 
         pin6 = [str(random.randint(0, 9)) for _ in range(6)]
@@ -423,7 +437,7 @@ values (%(sid)s, %(uid)s, %(ip)s, %(to)s, true, %(pin6)s);"""
 
                 dirname = os.environ["YENOT_2FA_DIR"]
                 seg = codecs.encode(session.encode("ascii"), "hex").decode("ascii")
-                fname = os.path.join(dirname, "authpin-{}".format(seg))
+                fname = os.path.join(dirname, f"authpin-{seg}")
                 with open(fname, "w") as f:
                     f.write("".join(pin6))
             if "sms" in t2fa:
@@ -435,12 +449,12 @@ values (%(sid)s, %(uid)s, %(ip)s, %(to)s, true, %(pin6)s);"""
                 auth_token = app.config["twilio"].auth_token
                 src_phone = app.config["twilio"].src_phone
 
-                pin6s = "{} {}".format("".join(pin6[:3]), "".join(pin6[3:]))
+                pin6s = f"{''.join(pin6[:3])} {''.join(pin6[3:])}"
                 client = Client(account_sid, auth_token)
                 client.messages.create(
                     to=t2fa["sms"],
                     from_=src_phone,
-                    body="Your one-time PIN is {}".format(pin6s),
+                    body=f"Your one-time PIN is {pin6s}",
                 )
 
         cursor.close()
@@ -483,16 +497,13 @@ values (%(sid)s, %(uid)s, %(ip)s, %(to)s);"""
             results.keys["access_token"] = yenotauth.core.session_token(
                 session, sessrow.id
             )
-            api.sql_void(
-                conn,
-                sess_insert,
-                {
-                    "sid": session,
-                    "uid": sessrow.userid,
-                    "ip": ip,
-                    "to": datetime.datetime.utcnow(),
-                },
-            )
+            sess_params = {
+                "sid": session,
+                "uid": sessrow.userid,
+                "ip": ip,
+                "to": datetime.datetime.utcnow(),
+            }
+            api.sql_void(conn, sess_insert, sess_params)
             conn.commit()
 
             capabilities = api.sql_tab2(conn, CAPS_SELECT, {"sid": session})
@@ -752,7 +763,7 @@ where roles.id=%(r)s
         )
 
         rn = api.sql_1row(conn, "select role_name from roles where id=%s", (role_id,))
-        results.key_labels += "Activities for Role {}".format(rn)
+        results.key_labels += f"Activities for Role {rn}"
 
     return results.json_out()
 
@@ -791,7 +802,7 @@ where roles.id=%(r)s
         results.tables["users", True] = api.sql_tab2(conn, select, {"r": role_id}, cm)
 
         rn = api.sql_1row(conn, "select role_name from roles where id=%s", (role_id,))
-        results.key_labels += "Users for Role {}".format(rn)
+        results.key_labels += f"Users for Role {rn}"
 
     return results.json_out()
 
@@ -821,7 +832,7 @@ left outer join (
             role_name=api.cgen.yenot_role.name(
                 label="Role", url_key="id", represents=True
             ),
-            count=api.cgen.auto(label="Users"),
+            count=api.cgen.auto(label="Users", skip_write=True),
         )
         results.tables["roles", True] = api.sql_tab2(conn, select, None, cm)
     return results.json_out()
@@ -1054,6 +1065,9 @@ where users.id in (select userid from users_universe)"""
 
 @app.put("/api/userroles/by-users", name="put_api_userroles_by_users")
 def put_userroles_by_users():
+    # Table userroles:
+    # - id: roleid
+    # - user_list: list of user id's to associate with this role
     coll = api.table_from_tab2("userroles", required=["id", "user_list"])
     # comma delimited list of user ids
     users = request.params.get("users").split(",")
@@ -1083,16 +1097,12 @@ delete from userroles where userroles.roleid=%(id)s and
                             userroles.userid in (select userid from users_del)"""
 
     with app.dbconn() as conn:
-        cursor = conn.cursor()
-
         for row in coll.rows:
             params = {"users": users, "tolink": list(row.user_list), "id": row.id}
 
-            cursor.execute(insert, params)
-            cursor.execute(delete, params)
-
+            api.sql_void(conn, insert, params)
+            api.sql_void(conn, delete, params)
         conn.commit()
-        cursor.close()
 
     return api.Results().json_out()
 
@@ -1142,6 +1152,9 @@ where roles.id in (select roleid from roles_universe)"""
 
 @app.put("/api/userroles/by-roles", name="put_api_userroles_by_roles")
 def put_api_userroles_by_roles():
+    # Table userroles:
+    # - id: user-id
+    # - role_list: list of role-ids
     coll = api.table_from_tab2("userroles", required=["id", "role_list"])
     # comma delimited list of role ids
     roles = request.params.get("roles").split(",")
@@ -1171,16 +1184,12 @@ delete from userroles where userroles.userid=%(id)s::uuid and
                             userroles.roleid in (select roleid from roles_del)"""
 
     with app.dbconn() as conn:
-        cursor = conn.cursor()
-
         for row in coll.rows:
             params = {"roles": roles, "tolink": list(row.role_list), "id": row.id}
 
-            cursor.execute(insert, params)
-            cursor.execute(delete, params)
-
+            api.sql_void(conn, insert, params)
+            api.sql_void(conn, delete, params)
         conn.commit()
-        cursor.close()
 
     return api.Results().json_out()
 
@@ -1233,22 +1242,18 @@ from roles join roles_universe on roles_universe.roleid=roles.id"""
 
 @app.put("/api/roleactivities/by-roles", name="put_api_roleactivities_by_roles")
 def put_api_roleactivities_by_roles():
+    # Table roleactivities:
+    # - id: activityid
+    # - permissions: list of dictionaries with key roleid and associated metadata
     coll = api.table_from_tab2("roleactivities", required=["id", "permissions"])
     # comma delimited list of role ids
     roles = request.params.get("roles").split(",")
     roles = list(roles)
 
-    for row in coll.rows:
-        if not hasattr(row, "id"):
-            row.id = uuid.uuid1().hex
-
-    values = """(%(roleid)s::uuid, %(permitted)s, %(dashboard)s, %(dashprompts)s)"""
-
     update = """
 -- update activity--role links for all roles in universe linked with some prior values.
-with permissions(roleid, permitted, dashboard, dashprompts) as (
-    values/*represented*/
-), toupdate as (
+with /*PERMISSIONS*/
+, toupdate as (
     select permissions.*
     from permissions
     join roleactivities on 
@@ -1263,9 +1268,8 @@ where toupdate.roleid=roleactivities.roleid and roleactivities.activityid=%(id)s
 
     insert = """
 -- insert activity--role links for all roles in universe not yet linked to activity.
-with permissions(roleid, permitted, dashboard, dashprompts) as (
-    values/*represented*/
-), toinsert as (
+with /*PERMISSIONS*/
+, toinsert as (
     select %(id)s::uuid as activityid, permissions.*
     from permissions
     left outer join roleactivities on 
@@ -1285,29 +1289,27 @@ delete from roleactivities where roleactivities.activityid=%(id)s and
                             roleactivities.roleid in (select roleid from roles_del)"""
 
     with app.dbconn() as conn:
-        cursor = conn.cursor()
         # TODO:  use upsert
-        cursor.execute("set transaction isolation level serializable")
+        api.sql_void(conn, "set transaction isolation level serializable")
 
         for row in coll.rows:
             represented = [r["roleid"] for r in row.permissions]
 
-            mogrifications = []
+            columns = ["roleid", "permitted", "dashboard", "dashprompts"]
+            permlist = api.InboundTable([(c, None) for c in columns], [])
             for passed in row.permissions:
                 if passed["roleid"] not in roles:
                     raise RuntimeError(
                         "roles parameter establishes universe of allowed values"
                     )
-                p = {
-                    "roleid": passed["roleid"],
-                    "permitted": passed.get("permitted", False),
-                    "dashboard": passed.get("dashboard", False),
-                    "dashprompts": passed.get("dashprompts", None),
-                }
-                if p["dashprompts"] != None:
-                    p["dashprompts"] = psycopg2.extras.Json(p["dashprompts"])
-                mogrifications.append(cursor.mogrify(values, p))
-            mogrifications = ",".join([x.decode("ascii") for x in mogrifications])
+                permlist.rows.append(
+                    permlist.DataRow(
+                        passed["roleid"],
+                        passed.get("permitted", False),
+                        passed.get("dashboard", False),
+                        passed.get("dashprompts", None),
+                    )
+                )
 
             # TODO: fix the ugly requirement for something to be in tolink param of delete:
             params = {
@@ -1319,16 +1321,20 @@ delete from roleactivities where roleactivities.activityid=%(id)s and
             }
 
             # delete
-            cursor.execute(delete, params)
+            api.sql_void(conn, delete, params)
             if len(represented) > 0:
+                ctypes = ["uuid", "boolean", "boolean", "json"]
+                mogrifications = permlist.as_cte(
+                    conn, "permissions", column_types=ctypes
+                )
+
                 # update
-                my_update = update.replace("/*represented*/", mogrifications)
-                cursor.execute(my_update, params)
+                my_update = update.replace("/*PERMISSIONS*/", mogrifications)
+                api.sql_void(conn, my_update, params)
                 # insert
-                my_insert = insert.replace("/*represented*/", mogrifications)
-                cursor.execute(my_insert, params)
+                my_insert = insert.replace("/*PERMISSIONS*/", mogrifications)
+                api.sql_void(conn, my_insert, params)
 
         conn.commit()
-        cursor.close()
 
     return api.Results().json_out()

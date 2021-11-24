@@ -86,7 +86,7 @@ values (
     for row in rows:
         for route, role in zip(routes, roles):
             if None != re.search(route, row.act_name):
-                print("{} <= {}".format(row.act_name, role))
+                print(f"{row.act_name} <= {role}")
                 api.sql_void(conn, ins2, {"rn": role, "u": row.act_name})
 
     rows = api.sql_rows(conn, select_unroled)

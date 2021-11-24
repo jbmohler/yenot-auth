@@ -51,7 +51,7 @@ def get_api_endpoints():
     x = rtlib.ClientTable(columns, rows)
 
     results.tables["endpoints", True] = x.as_tab2(column_map=cm)
-    results.key_labels += "{} unregistered endpoints".format(len(unreg_rows))
+    results.key_labels += f"{len(unreg_rows)} unregistered endpoints"
     results.keys["client-relateds"] = [
         ("Register Endpoints", "yenot:activities/register")
     ]
