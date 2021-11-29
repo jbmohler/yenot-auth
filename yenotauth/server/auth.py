@@ -6,7 +6,7 @@ import random
 import base64
 import bcrypt
 import psycopg2.extras
-from bottle import request, response
+from bottle import request, response, HTTPError
 import rtlib
 import yenot.backend.api as api
 import yenotauth.core
@@ -52,9 +52,10 @@ def post_api_user(userid=None):
             "full_name",
             "password",
             "pin",
-            "roles",
+            "target_2fa",
             "inactive",
             "descr",
+            "roles",
         ],
     )
 
@@ -134,7 +135,9 @@ def _get_api_user_record(userid):
 select users.id, users.username, full_name, descr,
     inactive,
     pinhash is not null as has_pin,
-    null as password
+    null as password,
+    null as pin,
+    target_2fa
 from users
 where users.id=%(uid)s
 """
@@ -172,6 +175,7 @@ where devicetokens.userid=%(uid)s and devicetokens.expires>current_timestamp-int
             username=api.cgen.yenot_user.name(url_key="id", represents=True),
             has_pin=api.cgen.auto(skip_write=True),
             password=api.cgen.auto(skip_write=userid != None),
+            pin=api.cgen.auto(skip_write=userid != None),
         )
         cols, rows = api.sql_tab2(conn, select, {"uid": userid}, cm)
 
@@ -318,60 +322,61 @@ values (%(sid)s, %(uid)s, %(ip)s, %(tokid)s, current_timestamp);"""
         tokid = None
         if password:
             secret = password
-            rows = api.sql_rows(conn, select_user, {"uname": username.upper()})
+            row = api.sql_1object(conn, select_user, {"uname": username.upper()})
         elif device_token:
             tokid, secret = decode_device_token(device_token)
-            rows = api.sql_rows(
+            row = api.sql_1object(
                 conn, select_devtok, {"uname": username.upper(), "tokid": tokid}
             )
 
-        content = {}
+        msg = None
 
-        if len(rows) == 0:
-            content["status"] = "no user by that name"
-            status = 210
-        elif rows[0].inactive:
-            content["status"] = "inactive"
-            status = 210
-        elif not rows[0].comphash:
-            content["status"] = "incorrect password"
-            status = 210
+        if device_token and row is None:
+            msg = "unknown-token or mismatched-user"
+        elif row is None:
+            msg = "unknown-user"
+        elif row.inactive:
+            msg = "inactive-user"
+        elif not row.comphash:
+            msg = "no-password-configured"
         elif bcrypt.hashpw(
-            secret.encode("utf8"), rows[0].comphash.encode("utf8")
-        ) != rows[0].comphash.encode("utf8"):
-            content["status"] = "incorrect password"
-            status = 210
-        elif device_token and rows[0].expires < datetime.datetime.utcnow():
-            content["status"] = "expired or unknown device token"
-            status = 210
+            secret.encode("utf8"), row.comphash.encode("utf8")
+        ) != row.comphash.encode("utf8"):
+            msg = "incorrect-password"
+        elif device_token and row.expires < datetime.datetime.utcnow():
+            msg = "expired-token"
         else:
-            content["status"] = f"welcome {rows[0].username}"
-            status = 200
+            results.keys["status"] = f"welcome {row.username}"
 
-        if status == 200:
-            # generate and write session
-            session = base64.b64encode(os.urandom(18)).decode("ascii")  # 24 characters
-            assert len(session) == 24
-            content["session"] = session
-            # TODO:  record the session expiration?
-            params = {"sid": session, "uid": rows[0].id, "ip": ip, "tokid": tokid}
-            api.sql_void(conn, sess_insert, params)
-            conn.commit()
+        if msg:
+            # show message in logs, but not to user
+            print(f"Login failed for {username.upper()}:  {msg}")
+            if device_token:
+                body = "Unrecognized token or mis-matched user"
+            else:
+                body = "Unknown user or wrong password"
+            raise HTTPError(status=401, body=body)
 
-            capabilities = api.sql_tab2(conn, CAPS_SELECT, {"sid": session})
+        # generate and write session
+        session = base64.b64encode(os.urandom(18)).decode("ascii")  # 24 characters
+        assert len(session) == 24
+        results.keys["session"] = session
+        # TODO:  record the session expiration?
+        params = {"sid": session, "uid": row.id, "ip": ip, "tokid": tokid}
+        api.sql_void(conn, sess_insert, params)
+        conn.commit()
 
-            content["access_token"] = yenotauth.core.session_token(session, rows[0].id)
-            content["userid"] = rows[0].id
-            content["username"] = rows[0].username
-            content["capabilities"] = capabilities
+        results.keys["access_token"] = yenotauth.core.session_token(session, row.id)
+        results.keys["userid"] = row.id
+        results.keys["username"] = row.username
+        results.keys["capabilities"] = api.sql_tab2(conn, CAPS_SELECT, {"sid": session})
 
-            # TODO set expiration to match token expiration
-            # hmm, but then how to do the auto renewal?
-            response.set_cookie("YenotToken", content["access_token"], httponly=True)
+        # TODO set expiration to match token expiration
+        # hmm, but then how to do the auto renewal?
+        response.set_cookie(
+            "YenotToken", results.keys["access_token"], httponly=True, path="/"
+        )
 
-        results.keys.update(content)
-
-    response.status = status
     return results.json_out()
 
 
@@ -381,85 +386,87 @@ def api_session_by_pin():
     pin = request.forms.get("pin")
     ip = request.environ.get("REMOTE_ADDR")
 
-    select = "select id, username, pinhash, target_2fa, inactive from users where username=%s"
+    select = "select id, username, pinhash, target_2fa, inactive from users where username=%(user)s"
     sess_insert = """
 insert into sessions (id, userid, ipaddress, refreshed, inactive, pin_2fa)
 values (%(sid)s, %(uid)s, %(ip)s, %(to)s, true, %(pin6)s);"""
 
-    status = 403
     results = api.Results()
     with app.dbconn() as conn:
-        cursor = conn.cursor()
-        cursor.execute(select, [username.upper()])
-        rows = cursor.fetchall()
+        row = api.sql_1object(conn, select, {"user": username.upper()})
 
-        if len(rows) == 0:
-            results.keys["status"] = "no user by that name"
-            status = 210
-        elif rows[0].inactive:
-            results.keys["status"] = "inactive"
-            status = 210
-        elif rows[0].pinhash == None:
-            results.keys["status"] = "no pin login for this user"
-            status = 210
-        elif bcrypt.hashpw(pin.encode("utf8"), rows[0].pinhash.encode("utf8")) != rows[
-            0
-        ].pinhash.encode("utf8"):
-            results.keys["status"] = "incorrect pin"
-            status = 210
+        msg = None
+
+        if row == None:
+            msg = "unknown-user"
+        elif row.inactive:
+            msg = "inactive-user"
+        elif row.pinhash == None:
+            msg = "no pin login for this user"
+        elif bcrypt.hashpw(
+            pin.encode("utf8"), row.pinhash.encode("utf8")
+        ) != row.pinhash.encode("utf8"):
+            msg = "incorrect-pin"
         else:
-            results.keys["status"] = f"welcome {rows[0].username}"
-            status = 200
+            results.keys["status"] = f"welcome {row.username}"
+
+        if msg:
+            # show message in logs, but not to user
+            print(f"Login failed for {username.upper()}:  {msg}")
+            body = "Unknown user or wrong password"
+            raise HTTPError(status=401, body=body)
 
         pin6 = [str(random.randint(0, 9)) for _ in range(6)]
 
-        if status == 200:
-            # generate and write session
-            session = base64.b64encode(os.urandom(18)).decode("ascii")  # 24 characters
-            assert len(session) == 24
-            results.keys["session"] = session
-            results.keys["access_token"] = yenotauth.core.session_token(
-                session, rows[0].id
+        # generate and write session
+        session = base64.b64encode(os.urandom(18)).decode("ascii")  # 24 characters
+        assert len(session) == 24
+        results.keys["session"] = session
+        results.keys["access_token"] = yenotauth.core.session_token(
+            session, row.id, duration=yenotauth.core.DURATION_2FA_TOKEN
+        )
+        params = {
+            "sid": session,
+            "uid": row.id,
+            "ip": ip,
+            "to": datetime.datetime.utcnow(),
+            "pin6": "".join(pin6),
+        }
+        api.sql_void(conn, sess_insert, params)
+        conn.commit()
+
+        # TODO set expiration to match token expiration
+        # hmm, but then how to do the auto renewal?
+        response.set_cookie(
+            "YenotToken", results.keys["access_token"], httponly=True, path="/"
+        )
+
+        t2fa = row.target_2fa
+        if "file" in t2fa:
+            import codecs
+
+            dirname = os.environ["YENOT_2FA_DIR"]
+            seg = codecs.encode(session.encode("ascii"), "hex").decode("ascii")
+            fname = os.path.join(dirname, f"authpin-{seg}")
+            with open(fname, "w") as f:
+                f.write("".join(pin6))
+        if "sms" in t2fa:
+            from twilio.rest import Client
+
+            # put your own credentials here
+
+            account_sid = app.config["twilio"].account_sid
+            auth_token = app.config["twilio"].auth_token
+            src_phone = app.config["twilio"].src_phone
+
+            pin6s = f"{''.join(pin6[:3])} {''.join(pin6[3:])}"
+            client = Client(account_sid, auth_token)
+            client.messages.create(
+                to=t2fa["sms"],
+                from_=src_phone,
+                body=f"Your one-time PIN is {pin6s}",
             )
-            params = {
-                "sid": session,
-                "uid": rows[0].id,
-                "ip": ip,
-                "to": datetime.datetime.utcnow(),
-                "pin6": "".join(pin6),
-            }
-            cursor.execute(sess_insert, params)
-            conn.commit()
 
-            t2fa = rows[0].target_2fa
-            if "file" in t2fa:
-                import codecs
-
-                dirname = os.environ["YENOT_2FA_DIR"]
-                seg = codecs.encode(session.encode("ascii"), "hex").decode("ascii")
-                fname = os.path.join(dirname, f"authpin-{seg}")
-                with open(fname, "w") as f:
-                    f.write("".join(pin6))
-            if "sms" in t2fa:
-                from twilio.rest import Client
-
-                # put your own credentials here
-
-                account_sid = app.config["twilio"].account_sid
-                auth_token = app.config["twilio"].auth_token
-                src_phone = app.config["twilio"].src_phone
-
-                pin6s = f"{''.join(pin6[:3])} {''.join(pin6[3:])}"
-                client = Client(account_sid, auth_token)
-                client.messages.create(
-                    to=t2fa["sms"],
-                    from_=src_phone,
-                    body=f"Your one-time PIN is {pin6s}",
-                )
-
-        cursor.close()
-
-    response.status = status
     return results.json_out()
 
 
@@ -481,41 +488,37 @@ values (%(sid)s, %(uid)s, %(ip)s, %(to)s);"""
     with app.dbconn() as conn:
         sessrow = api.sql_1object(conn, select, {"sid": session})
 
-        if sessrow != None:
-            if sessrow.pin_2fa == pin2:
-                status = 200
-            else:
-                status = 210
-        else:
-            status = 401
+        if sessrow == None or sessrow.pin_2fa != pin2:
+            raise HTTPError(status=401, body="Unknown session or mis-matched PIN")
 
-        if status == 200:
-            # generate and write session
-            session = base64.b64encode(os.urandom(18)).decode("ascii")  # 24 characters
-            assert len(session) == 24
-            results.keys["session"] = session
-            results.keys["access_token"] = yenotauth.core.session_token(
-                session, sessrow.id
-            )
-            sess_params = {
-                "sid": session,
-                "uid": sessrow.userid,
-                "ip": ip,
-                "to": datetime.datetime.utcnow(),
-            }
-            api.sql_void(conn, sess_insert, sess_params)
-            conn.commit()
+        # generate and write session
+        session = base64.b64encode(os.urandom(18)).decode("ascii")  # 24 characters
+        assert len(session) == 24
+        results.keys["session"] = session
+        results.keys["access_token"] = yenotauth.core.session_token(session, sessrow.id)
+        sess_params = {
+            "sid": session,
+            "uid": sessrow.userid,
+            "ip": ip,
+            "to": datetime.datetime.utcnow(),
+        }
+        api.sql_void(conn, sess_insert, sess_params)
+        conn.commit()
 
-            capabilities = api.sql_tab2(conn, CAPS_SELECT, {"sid": session})
+        results.keys["capabilities"] = api.sql_tab2(conn, CAPS_SELECT, {"sid": session})
 
-            results.keys["username"] = api.sql_1row(
-                conn,
-                "select username from users join sessions on sessions.userid=users.id where sessions.id=%(sid)s",
-                {"sid": session},
-            )
-            results.keys["capabilities"] = capabilities
+        results.keys["username"] = api.sql_1row(
+            conn,
+            "select username from users join sessions on sessions.userid=users.id where sessions.id=%(sid)s",
+            {"sid": session},
+        )
 
-    response.status = status
+        # TODO set expiration to match token expiration
+        # hmm, but then how to do the auto renewal?
+        response.set_cookie(
+            "YenotToken", results.keys["access_token"], httponly=True, path="/"
+        )
+
     return results.json_out()
 
 
@@ -546,7 +549,9 @@ def decode_device_token(devtoken):
 @app.post("/api/user/<userid>/device-token/new", name="post_api_user_device_token_new")
 def post_api_user_device_token_new(userid):
     device_name = request.params.get("device_name", None)
-    expdays = int(request.params.get("expdays", 30))
+    expdays = int(
+        request.params.get("expdays", yenotauth.core.DURATION_DEVICE_TOKEN_DAYS)
+    )
 
     insert = """
 insert into devicetokens (id, userid, device_name, tokenhash, issued, expires)

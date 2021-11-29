@@ -1,6 +1,8 @@
 import os
 import time
+import json
 import jose.jwt
+import jose.exceptions
 import rtlib
 from bottle import HTTPError, request
 import yenot.backend.api as api
@@ -32,13 +34,20 @@ def endpoints(self):
     ]
 
 
-def session_token(session, user_id):
+DURATION_ACCESS_TOKEN = 60 * 60  # 1 hour
+DURATION_2FA_TOKEN = 5 * 60  # 5 minutes
+DURATION_DEVICE_TOKEN_DAYS = 30
+
+
+def session_token(session, user_id, duration=None):
+    if duration is None:
+        duration = DURATION_ACCESS_TOKEN
     token_claims = {
         "iss": "yenot-auth",
         "sid": session,
         "sub": user_id,
         "iat": time.time(),
-        "exp": time.time() + 60 * 60,  # 1 hour
+        "exp": time.time() + duration,
     }
 
     secret = os.environ["YENOT_AUTH_SIGNING_SECRET"]
@@ -59,15 +68,26 @@ def request_token():
     return token
 
 
+class ForbiddenError(HTTPError):
+    def __init__(self, key, msg):
+        body = json.dumps([{"error-key": key, "error-msg": msg}])
+        super(ForbiddenError, self).__init__(403, body=body)
+
+
 def request_session_id():
     sid = None
 
     token = request_token()
 
     if token:
-        claims = jose.jwt.decode(
-            token, os.environ["YENOT_AUTH_SIGNING_SECRET"], algorithms=["HS256"]
-        )
+        try:
+            claims = jose.jwt.decode(
+                token, os.environ["YENOT_AUTH_SIGNING_SECRET"], algorithms=["HS256"]
+            )
+        except jose.exceptions.ExpiredSignatureError:
+            raise ForbiddenError(
+                "expired-token", "Access token is unrecognized or expired."
+            )
         sid = claims["sid"]
 
     return sid
@@ -77,9 +97,14 @@ def request_user_id(conn):
     token = request_token()
 
     if token:
-        claims = jose.jwt.decode(
-            token, os.environ["YENOT_AUTH_SIGNING_SECRET"], algorithms=["HS256"]
-        )
+        try:
+            claims = jose.jwt.decode(
+                token, os.environ["YENOT_AUTH_SIGNING_SECRET"], algorithms=["HS256"]
+            )
+        except jose.exceptions.ExpiredSignatureError:
+            raise ForbiddenError(
+                "expired-token", "Access token is unrecognized or expired."
+            )
         return claims["sub"]
 
     return None
@@ -134,9 +159,11 @@ def raise_unauthorized(app, routename, sid=None):
         if len(rows) == 0:
             raise HTTPError(401, "no current session found")
         elif len([r for r in rows if r.role_name is not None]) == 0:
-            raise HTTPError(403, "Content forbidden")
+            raise ForbiddenError("user-unauthorized", "Content forbidden")
         elif rows[0].expired:
-            raise HTTPError(403, "Expired Session")
+            raise ForbiddenError(
+                "expired-token", "Access token is unrecognized or expired."
+            )
         else:
             request.route.config["_yenot_title_"] = rows[0].description
     return True
