@@ -1,10 +1,9 @@
 import os
 import time
-import json
 import jose.jwt
 import jose.exceptions
 import rtlib
-from bottle import HTTPError, request
+from bottle import request
 import yenot.backend.api as api
 
 
@@ -68,12 +67,6 @@ def request_token():
     return token
 
 
-class ForbiddenError(HTTPError):
-    def __init__(self, key, msg):
-        body = json.dumps([{"error-key": key, "error-msg": msg}])
-        super(ForbiddenError, self).__init__(403, body=body)
-
-
 def request_session_id():
     sid = None
 
@@ -85,7 +78,7 @@ def request_session_id():
                 token, os.environ["YENOT_AUTH_SIGNING_SECRET"], algorithms=["HS256"]
             )
         except jose.exceptions.ExpiredSignatureError:
-            raise ForbiddenError(
+            raise api.ForbiddenError(
                 "expired-token", "Access token is unrecognized or expired."
             )
         sid = claims["sid"]
@@ -102,7 +95,7 @@ def request_user_id(conn):
                 token, os.environ["YENOT_AUTH_SIGNING_SECRET"], algorithms=["HS256"]
             )
         except jose.exceptions.ExpiredSignatureError:
-            raise ForbiddenError(
+            raise api.ForbiddenError(
                 "expired-token", "Access token is unrecognized or expired."
             )
         return claims["sub"]
@@ -157,11 +150,11 @@ def raise_unauthorized(app, routename, sid=None):
     with app.dbconn() as conn:
         rows = api.sql_rows(conn, AUTH_SELECT, {"sid": sid, "act": routename})
         if len(rows) == 0:
-            raise HTTPError(401, "no current session found")
+            raise api.UnauthorizedError("unknown-session", "no current session found")
         elif len([r for r in rows if r.role_name is not None]) == 0:
-            raise ForbiddenError("user-unauthorized", "Content forbidden")
+            raise api.ForbiddenError("user-unauthorized", "Content forbidden")
         elif rows[0].expired:
-            raise ForbiddenError(
+            raise api.ForbiddenError(
                 "expired-token", "Access token is unrecognized or expired."
             )
         else:
@@ -184,7 +177,9 @@ class YenotAuth:
         def wrapper(*args, **kwargs):
             sid = request_session_id()
             if sid == None:
-                raise HTTPError(401, "Content forbidden (provide valid bearer token)")
+                raise api.UnauthorizedError(
+                    "no-session", "Content forbidden (provide valid bearer token)"
+                )
             rname = route.name
             self.checkauth(sid, rname)
             return callback(*args, **kwargs)

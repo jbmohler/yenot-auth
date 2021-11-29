@@ -6,7 +6,7 @@ import random
 import base64
 import bcrypt
 import psycopg2.extras
-from bottle import request, response, HTTPError
+from bottle import request, response
 import rtlib
 import yenot.backend.api as api
 import yenotauth.core
@@ -355,7 +355,7 @@ values (%(sid)s, %(uid)s, %(ip)s, %(tokid)s, current_timestamp);"""
                 body = "Unrecognized token or mis-matched user"
             else:
                 body = "Unknown user or wrong password"
-            raise HTTPError(status=401, body=body)
+            raise api.UnauthorizedError("unknown-credentials", body)
 
         # generate and write session
         session = base64.b64encode(os.urandom(18)).decode("ascii")  # 24 characters
@@ -414,7 +414,7 @@ values (%(sid)s, %(uid)s, %(ip)s, %(to)s, true, %(pin6)s);"""
             # show message in logs, but not to user
             print(f"Login failed for {username.upper()}:  {msg}")
             body = "Unknown user or wrong password"
-            raise HTTPError(status=401, body=body)
+            raise api.UnauthorizedError("unknown-credentials", body)
 
         pin6 = [str(random.randint(0, 9)) for _ in range(6)]
 
@@ -489,7 +489,9 @@ values (%(sid)s, %(uid)s, %(ip)s, %(to)s);"""
         sessrow = api.sql_1object(conn, select, {"sid": session})
 
         if sessrow == None or sessrow.pin_2fa != pin2:
-            raise HTTPError(status=401, body="Unknown session or mis-matched PIN")
+            raise api.UnauthorizedError(
+                "unknown-credentials", "Unknown session or mis-matched PIN"
+            )
 
         # generate and write session
         session = base64.b64encode(os.urandom(18)).decode("ascii")  # 24 characters
