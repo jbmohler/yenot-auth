@@ -1,4 +1,3 @@
-from bottle import request
 import yenot.backend.api as api
 import yenotauth.core
 
@@ -6,7 +5,7 @@ app = api.get_global_app()
 
 
 @app.get("/api/user/<userid>/reports", name="api_user_reports")
-def get_user_reports(userid):
+def get_user_reports(request, userid):
     global app
     dashboard = api.parse_bool(request.params.get("dashboard", False))
 

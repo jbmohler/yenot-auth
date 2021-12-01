@@ -1,4 +1,3 @@
-from bottle import request
 import rtlib
 import yenot.backend.api as api
 import yenotauth.core
@@ -19,7 +18,7 @@ def get_api_endpoints_prompts():
     report_title="Yenot Entry Points",
     report_prompts=get_api_endpoints_prompts,
 )
-def get_api_endpoints():
+def get_api_endpoints(request):
     unregistered = api.parse_bool(request.query.get("unregistered", False))
 
     cm = api.ColumnMap(

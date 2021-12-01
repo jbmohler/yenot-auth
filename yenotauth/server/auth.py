@@ -6,7 +6,6 @@ import random
 import base64
 import bcrypt
 import psycopg2.extras
-from bottle import request, response
 import rtlib
 import yenot.backend.api as api
 import yenotauth.core
@@ -43,7 +42,7 @@ def activity_sidebar(idcolumn, namecolumn):
 
 @app.put("/api/user/<userid>", name="put_api_user")
 @app.post("/api/user", name="post_api_user")
-def post_api_user(userid=None):
+def post_api_user(request, userid=None):
     user = api.table_from_tab2(
         "user",
         amendments=["id"],
@@ -248,7 +247,7 @@ where id=(select userid from sessions where sessions.id=%(sid)s)"""
 
 
 @app.post("/api/user/me/change-password", name="api_user_me_change_password")
-def api_user_me_change_password():
+def api_user_me_change_password(request):
     oldpass = request.forms.get("oldpass")
     newpass = request.forms.get("newpass")
 
@@ -267,7 +266,7 @@ update users set pwhash=%(h)s where id=%(i)s"""
 
 
 @app.post("/api/user/me/change-pin", name="api_user_me_change_pin")
-def api_user_me_change_pin():
+def api_user_me_change_pin(request):
     oldpass = request.forms.get("oldpass")
     newpin = request.forms.get("newpin")
     t2fa = json.loads(request.forms.get("target_2fa"))
@@ -288,7 +287,7 @@ update users set pinhash=%(h)s, target_2fa=%(fa)s where id=%(i)s"""
 
 
 @app.post("/api/session", name="api_session", skip=["yenot-auth"])
-def api_session():
+def api_session(request):
     username = request.forms.get("username")
     password = request.forms.get("password", None)
     device_token = request.forms.get("device_token", None)
@@ -373,7 +372,7 @@ values (%(sid)s, %(uid)s, %(ip)s, %(tokid)s, current_timestamp);"""
 
         # TODO set expiration to match token expiration
         # hmm, but then how to do the auto renewal?
-        response.set_cookie(
+        results.set_cookie(
             "YenotToken", results.keys["access_token"], httponly=True, path="/"
         )
 
@@ -381,7 +380,7 @@ values (%(sid)s, %(uid)s, %(ip)s, %(tokid)s, current_timestamp);"""
 
 
 @app.post("/api/session-by-pin", name="api_session_by_pin", skip=["yenot-auth"])
-def api_session_by_pin():
+def api_session_by_pin(request):
     username = request.forms.get("username")
     pin = request.forms.get("pin")
     ip = request.environ.get("REMOTE_ADDR")
@@ -437,7 +436,7 @@ values (%(sid)s, %(uid)s, %(ip)s, %(to)s, true, %(pin6)s);"""
 
         # TODO set expiration to match token expiration
         # hmm, but then how to do the auto renewal?
-        response.set_cookie(
+        results.set_cookie(
             "YenotToken", results.keys["access_token"], httponly=True, path="/"
         )
 
@@ -473,7 +472,7 @@ values (%(sid)s, %(uid)s, %(ip)s, %(to)s, true, %(pin6)s);"""
 @app.post(
     "/api/session/promote-2fa", name="api_session_promote_2fa", skip=["yenot-auth"]
 )
-def api_session_promote_2fa():
+def api_session_promote_2fa(request):
     session = yenotauth.core.request_session_id()
     pin2 = request.forms.get("pin2")
 
@@ -517,7 +516,7 @@ values (%(sid)s, %(uid)s, %(ip)s, %(to)s);"""
 
         # TODO set expiration to match token expiration
         # hmm, but then how to do the auto renewal?
-        response.set_cookie(
+        results.set_cookie(
             "YenotToken", results.keys["access_token"], httponly=True, path="/"
         )
 
@@ -549,7 +548,7 @@ def decode_device_token(devtoken):
 
 
 @app.post("/api/user/<userid>/device-token/new", name="post_api_user_device_token_new")
-def post_api_user_device_token_new(userid):
+def post_api_user_device_token_new(request, userid):
     device_name = request.params.get("device_name", None)
     expdays = int(
         request.params.get("expdays", yenotauth.core.DURATION_DEVICE_TOKEN_DAYS)
@@ -653,7 +652,7 @@ def get_users_prompts():
     report_prompts=get_users_prompts,
     report_sidebars=user_sidebar("id"),
 )
-def get_users():
+def get_users(request):
     iinactive = api.parse_bool(request.params.get("include_inactive", False))
     userrole = request.params.get("userrole", None)
 
@@ -744,7 +743,7 @@ def get_activities_by_role_prompts():
     report_title="Activities for Role",
     report_prompts=get_activities_by_role_prompts,
 )
-def get_activities_by_role():
+def get_activities_by_role(request):
     role_id = request.query.get("role", None)
 
     select = """
@@ -786,7 +785,7 @@ def get_users_by_role_prompts():
     report_title="Users for Role",
     report_prompts=get_users_by_role_prompts,
 )
-def get_users_by_role():
+def get_users_by_role(request):
     role_id = request.query.get("role", None)
 
     select = """
@@ -1030,7 +1029,7 @@ delete from activities where id=%(r)s;
 
 
 @app.get("/api/userroles/by-users", name="get_api_userroles_by_users")
-def get_api_userroles_by_users():
+def get_api_userroles_by_users(request):
     # comma delimited list of user ids
     users = request.params.get("users").split(",")
     users = list(users)
@@ -1071,7 +1070,7 @@ where users.id in (select userid from users_universe)"""
 
 
 @app.put("/api/userroles/by-users", name="put_api_userroles_by_users")
-def put_userroles_by_users():
+def put_userroles_by_users(request):
     # Table userroles:
     # - id: roleid
     # - user_list: list of user id's to associate with this role
@@ -1115,7 +1114,7 @@ delete from userroles where userroles.roleid=%(id)s and
 
 
 @app.get("/api/userroles/by-roles", name="get_api_userroles_by_roles")
-def get_api_userroles_by_roles():
+def get_api_userroles_by_roles(request):
     # comma delimited list of role ids
     roles = request.params.get("roles").split(",")
     roles = list(roles)
@@ -1158,7 +1157,7 @@ where roles.id in (select roleid from roles_universe)"""
 
 
 @app.put("/api/userroles/by-roles", name="put_api_userroles_by_roles")
-def put_api_userroles_by_roles():
+def put_api_userroles_by_roles(request):
     # Table userroles:
     # - id: user-id
     # - role_list: list of role-ids
@@ -1202,7 +1201,7 @@ delete from userroles where userroles.userid=%(id)s::uuid and
 
 
 @app.get("/api/roleactivities/by-roles", name="get_api_roleactivities_by_roles")
-def get_api_roleactivities_by_roles():
+def get_api_roleactivities_by_roles(request):
     # comma delimited list of role ids
     roles = request.params.get("roles").split(",")
     roles = list(roles)
@@ -1248,7 +1247,7 @@ from roles join roles_universe on roles_universe.roleid=roles.id"""
 
 
 @app.put("/api/roleactivities/by-roles", name="put_api_roleactivities_by_roles")
-def put_api_roleactivities_by_roles():
+def put_api_roleactivities_by_roles(request):
     # Table roleactivities:
     # - id: activityid
     # - permissions: list of dictionaries with key roleid and associated metadata
