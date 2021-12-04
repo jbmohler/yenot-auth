@@ -1,5 +1,5 @@
 import os
-import time
+import base64
 import jose.jwt
 import jose.exceptions
 import rtlib
@@ -33,20 +33,25 @@ def endpoints(self):
     ]
 
 
+# access and refresh tokens have the same duration but different audiences
 DURATION_ACCESS_TOKEN = 60 * 60  # 1 hour
 DURATION_2FA_TOKEN = 5 * 60  # 5 minutes
 DURATION_DEVICE_TOKEN_DAYS = 30
 
 
-def session_token(session, user_id, duration=None):
-    if duration is None:
-        duration = DURATION_ACCESS_TOKEN
+def generate_crypt_id24():
+    g = base64.b64encode(os.urandom(18)).decode("ascii")  # 24 characters
+    assert len(g) == 24
+    return g
+
+
+def session_token(userid, issued, expires, claims):
     token_claims = {
         "iss": "yenot-auth",
-        "sid": session,
-        "sub": user_id,
-        "iat": time.time(),
-        "exp": time.time() + duration,
+        "sub": str(userid),
+        "iat": issued,
+        "exp": expires,
+        **claims,
     }
 
     secret = os.environ["YENOT_AUTH_SIGNING_SECRET"]
@@ -56,6 +61,7 @@ def session_token(session, user_id, duration=None):
 def request_token():
     token = None
 
+    # TODO: not going to support this any more
     if "Authorization" in request.headers:
         bearer = request.headers["Authorization"]
         if bearer.startswith("Bearer "):
@@ -67,38 +73,42 @@ def request_token():
     return token
 
 
+def verify_jwt_exception(token, audience):
+    try:
+        claims = jose.jwt.decode(
+            token, os.environ["YENOT_AUTH_SIGNING_SECRET"], algorithms=["HS256"]
+        )
+    except jose.exceptions.ExpiredSignatureError:
+        raise api.ForbiddenError(
+            "expired-token", "Access token is unrecognized or expired."
+        )
+
+    if claims["yenot-type"] != audience:
+        raise api.ForbiddenError(
+            "incorrect-token", "Token is used in the wrong context."
+        )
+
+    return claims
+
+
 def request_session_id():
     sid = None
 
     token = request_token()
 
     if token:
-        try:
-            claims = jose.jwt.decode(
-                token, os.environ["YENOT_AUTH_SIGNING_SECRET"], algorithms=["HS256"]
-            )
-        except jose.exceptions.ExpiredSignatureError:
-            raise api.ForbiddenError(
-                "expired-token", "Access token is unrecognized or expired."
-            )
-        sid = claims["sid"]
+        sid = verify_jwt_exception(token, "access")["yenot-session-id"]
 
     return sid
 
 
 def request_user_id(conn):
+    # TODO remove
+    raise NotImplementedError()
     token = request_token()
 
     if token:
-        try:
-            claims = jose.jwt.decode(
-                token, os.environ["YENOT_AUTH_SIGNING_SECRET"], algorithms=["HS256"]
-            )
-        except jose.exceptions.ExpiredSignatureError:
-            raise api.ForbiddenError(
-                "expired-token", "Access token is unrecognized or expired."
-            )
-        return claims["sub"]
+        return verify_jwt_exception(token, "access")["sub"]
 
     return None
 
@@ -125,7 +135,7 @@ def request_content_title(self):
 
 AUTH_SELECT = """
 select sessions.userid, sessions.inactive,
-    sessions.refreshed<current_timestamp-interval '60 minutes' as expired,
+    sessions.expires<current_timestamp as expired,
     activity.role_name, activity.description
 from sessions
 left outer join lateral (

@@ -19,7 +19,7 @@ create table users (
   id uuid primary key default uuid_generate_v1mc(),
   username varchar(20) not null unique,
   pwhash varchar(60) CHECK (pwhash ~ '^[\x21-\x7F]*$'),
-  pinhash varchar(60) CHECK (pwhash ~ '^[\x21-\x7F]*$'),
+  pinhash varchar(60) CHECK (pinhash ~ '^[\x21-\x7F]*$'),
   target_2fa json,
   full_name text,
   descr text,
@@ -47,16 +47,18 @@ create table devicetokens (
   device_name text,
   tokenhash varchar(60) CHECK (tokenhash ~ '^[\x21-\x7F]*$'),
   issued timestamp without time zone not null,
-  inactive boolean not null default false,
-  expires timestamp without time zone not null
+  expires timestamp without time zone not null,
+  inactive boolean not null default false
 );
 
 create table sessions (
-  id character(24) primary key,
+  id uuid primary key,
+  refresh_hash varchar(60) CHECK (refresh_hash ~ '^[\x21-\x7F]*$'),
   userid uuid references users(id) not null,
   ipaddress character varying(45),
   devtok_id character(32) references devicetokens(id),
-  refreshed timestamp without time zone not null,
+  issued timestamp without time zone not null,
+  expires timestamp without time zone not null,
   inactive boolean not null default false,
   pin_2fa char(6)
 );

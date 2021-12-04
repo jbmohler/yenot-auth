@@ -1,9 +1,9 @@
 import os
 import json
 import uuid
+import time
 import datetime
 import random
-import base64
 import bcrypt
 import psycopg2.extras
 import rtlib
@@ -155,13 +155,13 @@ select
     devicetokens.id, devicetokens.device_name,
     devicetokens.issued, devicetokens.expires,
     devicetokens.expires<current_timestamp as expired,
-    x.last_session_refresh
+    x.last_session_expires
 from devicetokens
 left outer join lateral (
-    select devicetokens.id, sessions.refreshed as last_session_refresh
+    select devicetokens.id, sessions.expires as last_session_expires
     from devicetokens
     join sessions on sessions.devtok_id=devicetokens.id
-    left outer join sessions s2 on s2.devtok_id=devicetokens.id and s2.refreshed > sessions.refreshed
+    left outer join sessions s2 on s2.devtok_id=devicetokens.id and s2.expires > sessions.expires
     where s2.devtok_id is null
     ) x on x.id=devicetokens.id
 where devicetokens.userid=%(uid)s and devicetokens.expires>current_timestamp-interval '48 hours'
@@ -286,6 +286,123 @@ update users set pinhash=%(h)s, target_2fa=%(fa)s where id=%(i)s"""
     return api.Results().json_out()
 
 
+def generate_session_cookies(
+    conn,
+    results,
+    *,
+    create_new_session=False,
+    new_session_2fa=False,
+    sessrow=None,
+    userid=None,
+    devtok_id=None,
+    ipaddress=None,
+    pin_2fa=None,
+):
+    # xor :)
+    assert create_new_session or sessrow
+    assert not create_new_session or not sessrow
+
+    # generate and write session
+    if create_new_session:
+        session_id = uuid.uuid4().hex
+    else:
+        session_id = str(sessrow.id)
+
+    if new_session_2fa:
+        refresh_pwd = None
+        hashed = None
+    else:
+        refresh_pwd = yenotauth.core.generate_crypt_id24()
+
+        hashed = bcrypt.hashpw(refresh_pwd.encode("utf8"), bcrypt.gensalt())
+        hashed = hashed.decode("ascii")
+
+    duration = (
+        yenotauth.core.DURATION_ACCESS_TOKEN
+        if not new_session_2fa
+        else yenotauth.core.DURATION_2FA_TOKEN
+    )
+
+    issued = time.time()
+    expires = issued + duration
+
+    sess_insert = """
+insert into sessions (id, refresh_hash, userid, ipaddress, devtok_id, issued, expires, pin_2fa)
+values (%(sid)s, %(refhash)s, %(uid)s, %(ip)s, %(tokid)s,
+            timestamp 'epoch' + %(iss)s * interval '1 second',
+            timestamp 'epoch' + %(exp)s * interval '1 second',
+            %(p2fa)s);"""
+
+    # Updates refresh_id & expires effectively performing refresh token rotation
+    sess_update = """
+update sessions set 
+    refresh_hash=%(rid)s,
+    expires=timestamp 'epoch' + %(exp)s * interval '1 second'
+where sessions.id=%(sid)s and not sessions.inactive
+returning sessions.id, sessions.refresh_hash, sessions.userid
+"""
+
+    if create_new_session:
+        params = {
+            "sid": session_id,
+            "refhash": hashed,
+            "uid": userid,
+            "ip": ipaddress,
+            "tokid": devtok_id,
+            "iss": issued,
+            "exp": expires,
+            "p2fa": pin_2fa,
+        }
+        api.sql_void(conn, sess_insert, params)
+    else:
+        params = {"sid": session_id, "rid": hashed, "exp": expires}
+        api.sql_void(conn, sess_update, params)
+
+    access_token = yenotauth.core.session_token(
+        userid,
+        issued,
+        expires,
+        {
+            "yenot-session-id": session_id,
+            "yenot-type": "access" if not new_session_2fa else "2fa-verify",
+        },
+    )
+    if not new_session_2fa:
+        refresh_token = yenotauth.core.session_token(
+            userid,
+            issued,
+            expires,
+            {
+                "yenot-session-id": session_id,
+                "yenot-refresh-id": refresh_pwd,
+                "yenot-type": "refresh",
+            },
+        )
+
+    # Perhaps there is a condition in which we set these in the payload
+    if False:
+        results.keys["access_token"] = access_token
+        results.keys["refresh_token"] = refresh_token
+    if not new_session_2fa:
+        results.keys["userid"] = userid
+        results.keys["username"] = api.sql_1row(
+            conn,
+            "select username from users where id=%(uid)s",
+            {"uid": userid},
+        )
+        results.keys["capabilities"] = api.sql_tab2(
+            conn, CAPS_SELECT, {"sid": session_id}
+        )
+
+    results.set_cookie("YenotToken", access_token, httponly=True, path="/")
+    if not new_session_2fa:
+        results.set_cookie(
+            "YenotRefreshToken", refresh_token, httponly=True, path="/api/session"
+        )
+
+    return session_id
+
+
 @app.post("/api/session", name="api_session", skip=["yenot-auth"])
 def api_session(request):
     username = request.forms.get("username")
@@ -311,10 +428,6 @@ where
     and devicetokens.id=%(tokid)s
     and not devicetokens.inactive
     and devicetokens.expires>current_timestamp"""
-
-    sess_insert = """
-insert into sessions (id, userid, ipaddress, devtok_id, refreshed)
-values (%(sid)s, %(uid)s, %(ip)s, %(tokid)s, current_timestamp);"""
 
     results = api.Results()
     with app.dbconn() as conn:
@@ -356,25 +469,62 @@ values (%(sid)s, %(uid)s, %(ip)s, %(tokid)s, current_timestamp);"""
                 body = "Unknown user or wrong password"
             raise api.UnauthorizedError("unknown-credentials", body)
 
-        # generate and write session
-        session = base64.b64encode(os.urandom(18)).decode("ascii")  # 24 characters
-        assert len(session) == 24
-        results.keys["session"] = session
-        # TODO:  record the session expiration?
-        params = {"sid": session, "uid": row.id, "ip": ip, "tokid": tokid}
-        api.sql_void(conn, sess_insert, params)
+        generate_session_cookies(
+            conn,
+            results,
+            create_new_session=True,
+            userid=row.id,
+            devtok_id=tokid,
+            ipaddress=ip,
+        )
+
         conn.commit()
 
-        results.keys["access_token"] = yenotauth.core.session_token(session, row.id)
-        results.keys["userid"] = row.id
-        results.keys["username"] = row.username
-        results.keys["capabilities"] = api.sql_tab2(conn, CAPS_SELECT, {"sid": session})
+    return results.json_out()
 
-        # TODO set expiration to match token expiration
-        # hmm, but then how to do the auto renewal?
-        results.set_cookie(
-            "YenotToken", results.keys["access_token"], httponly=True, path="/"
-        )
+
+@app.get("/api/session/refresh", name="api_session_refresh", skip=["yenot-auth"])
+def api_session_refresh(request):
+    # Require a refresh token and issue a new refresh token and access token.
+    # Note that this end-point is effectively double auth-ed since it will
+    # receive an access token cookie which is verified by the framework.
+    token = request.cookies.get("YenotRefreshToken")
+    claims = yenotauth.core.verify_jwt_exception(token, "refresh")
+    session_id = claims["yenot-session-id"]
+    refresh_pwd = claims["yenot-refresh-id"]
+
+    select = """
+select id, refresh_hash
+from sessions
+where id=%(sid)s and not inactive
+"""
+
+    results = api.Results()
+    with app.dbconn() as conn:
+        # Note: this rotates the refresh_id but does not change the session_id
+        # (part of the access token).  This seems counter-intuitive but it is a
+        # secure implementation by virtue of the signing of the JWT which
+        # includes an expiration.
+
+        # get the session row & check refresh hash
+        sessrow = api.sql_1object(conn, select, {"sid": session_id})
+
+        if sessrow is None:
+            # One possible way to get here is that the refresh token was
+            # already used by a malicious actor.
+            print("No session found")
+            raise api.ForbiddenError("unknown-token", "Passed refresh token not found.")
+
+        if bcrypt.hashpw(
+            refresh_pwd.encode("utf8"), sessrow.refresh_hash.encode("utf8")
+        ) != sessrow.refresh_hash.encode("utf8"):
+            # One possible way to get here is that the refresh token was
+            # already used by a malicious actor.
+            print("refresh pwd did not match")
+            raise api.ForbiddenError("unknown-token", "Passed refresh token not found.")
+
+        generate_session_cookies(conn, results, sessrow=sessrow)
+        conn.commit()
 
     return results.json_out()
 
@@ -386,9 +536,6 @@ def api_session_by_pin(request):
     ip = request.environ.get("REMOTE_ADDR")
 
     select = "select id, username, pinhash, target_2fa, inactive from users where username=%(user)s"
-    sess_insert = """
-insert into sessions (id, userid, ipaddress, refreshed, inactive, pin_2fa)
-values (%(sid)s, %(uid)s, %(ip)s, %(to)s, true, %(pin6)s);"""
 
     results = api.Results()
     with app.dbconn() as conn:
@@ -415,29 +562,17 @@ values (%(sid)s, %(uid)s, %(ip)s, %(to)s, true, %(pin6)s);"""
             body = "Unknown user or wrong password"
             raise api.UnauthorizedError("unknown-credentials", body)
 
+        # TODO:  use os.urandom
         pin6 = [str(random.randint(0, 9)) for _ in range(6)]
 
-        # generate and write session
-        session = base64.b64encode(os.urandom(18)).decode("ascii")  # 24 characters
-        assert len(session) == 24
-        results.keys["session"] = session
-        results.keys["access_token"] = yenotauth.core.session_token(
-            session, row.id, duration=yenotauth.core.DURATION_2FA_TOKEN
-        )
-        params = {
-            "sid": session,
-            "uid": row.id,
-            "ip": ip,
-            "to": datetime.datetime.utcnow(),
-            "pin6": "".join(pin6),
-        }
-        api.sql_void(conn, sess_insert, params)
-        conn.commit()
-
-        # TODO set expiration to match token expiration
-        # hmm, but then how to do the auto renewal?
-        results.set_cookie(
-            "YenotToken", results.keys["access_token"], httponly=True, path="/"
+        session_id = generate_session_cookies(
+            conn,
+            results,
+            create_new_session=True,
+            new_session_2fa=True,
+            userid=row.id,
+            ipaddress=ip,
+            pin_2fa="".join(pin6),
         )
 
         t2fa = row.target_2fa
@@ -445,7 +580,7 @@ values (%(sid)s, %(uid)s, %(ip)s, %(to)s, true, %(pin6)s);"""
             import codecs
 
             dirname = os.environ["YENOT_2FA_DIR"]
-            seg = codecs.encode(session.encode("ascii"), "hex").decode("ascii")
+            seg = codecs.encode(session_id.encode("ascii"), "hex").decode("ascii")
             fname = os.path.join(dirname, f"authpin-{seg}")
             with open(fname, "w") as f:
                 f.write("".join(pin6))
@@ -466,6 +601,8 @@ values (%(sid)s, %(uid)s, %(ip)s, %(to)s, true, %(pin6)s);"""
                 body=f"Your one-time PIN is {pin6s}",
             )
 
+        conn.commit()
+
     return results.json_out()
 
 
@@ -473,52 +610,35 @@ values (%(sid)s, %(uid)s, %(ip)s, %(to)s, true, %(pin6)s);"""
     "/api/session/promote-2fa", name="api_session_promote_2fa", skip=["yenot-auth"]
 )
 def api_session_promote_2fa(request):
-    session = yenotauth.core.request_session_id()
+    token = request.cookies.get("YenotToken")
+    claims = yenotauth.core.verify_jwt_exception(token, "2fa-verify")
+    session = claims["yenot-session-id"]
     pin2 = request.forms.get("pin2")
 
     ip = request.environ.get("REMOTE_ADDR")
 
     select = "select * from sessions where id=%(sid)s"
-    sess_insert = """
-insert into sessions (id, userid, ipaddress, refreshed)
-values (%(sid)s, %(uid)s, %(ip)s, %(to)s);"""
 
     results = api.Results()
     with app.dbconn() as conn:
         sessrow = api.sql_1object(conn, select, {"sid": session})
 
+        # TODO:  should this pin_2fa be hashed?
         if sessrow == None or sessrow.pin_2fa != pin2:
             raise api.UnauthorizedError(
                 "unknown-credentials", "Unknown session or mis-matched PIN"
             )
 
         # generate and write session
-        session = base64.b64encode(os.urandom(18)).decode("ascii")  # 24 characters
-        assert len(session) == 24
-        results.keys["session"] = session
-        results.keys["access_token"] = yenotauth.core.session_token(session, sessrow.id)
-        sess_params = {
-            "sid": session,
-            "uid": sessrow.userid,
-            "ip": ip,
-            "to": datetime.datetime.utcnow(),
-        }
-        api.sql_void(conn, sess_insert, sess_params)
-        conn.commit()
-
-        results.keys["capabilities"] = api.sql_tab2(conn, CAPS_SELECT, {"sid": session})
-
-        results.keys["username"] = api.sql_1row(
+        generate_session_cookies(
             conn,
-            "select username from users join sessions on sessions.userid=users.id where sessions.id=%(sid)s",
-            {"sid": session},
+            results,
+            create_new_session=True,
+            userid=sessrow.userid,
+            devtok_id=sessrow.devtok_id,
+            ipaddress=ip,
         )
-
-        # TODO set expiration to match token expiration
-        # hmm, but then how to do the auto renewal?
-        results.set_cookie(
-            "YenotToken", results.keys["access_token"], httponly=True, path="/"
-        )
+        conn.commit()
 
     return results.json_out()
 
@@ -618,12 +738,12 @@ where devtok_id=%(devid)s;"""
 )
 def get_api_sessions_active():
     select = """
-select users.id, users.username, sessions.ipaddress, sessions.refreshed,
+select users.id, users.username, sessions.ipaddress, sessions.issued,
     devicetokens.device_name
 from sessions
 join users on users.id=sessions.userid
 left outer join devicetokens on devicetokens.id=sessions.devtok_id
-where not sessions.inactive and sessions.refreshed>current_timestamp-interval '61 minutes'
+where not sessions.inactive and sessions.expires>current_timestamp
 """
 
     results = api.Results(default_title=True)
@@ -706,13 +826,15 @@ order by users.username
 )
 def get_users_lastlogin():
     select = """
-select users.id, users.username, lastlog.ipaddress, lastlog.refreshed, active.count as active_count
+select users.id, users.username, 
+    lastlog.ipaddress, lastlog.issued, 
+    active.count as active_count
 from users
 join lateral (
-    select sessions.ipaddress, sessions.refreshed
+    select sessions.ipaddress, sessions.issued
     from sessions
     where sessions.userid=users.id
-    order by refreshed desc
+    order by issued desc
     limit 1) lastlog on true
 left outer join lateral (
     select count(*)
