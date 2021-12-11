@@ -150,6 +150,16 @@ where roles.id in (
 order by roles.sort, roles.role_name;
 """
 
+    selectsess = """
+select
+    sessions.id, sessions.inactive,
+    sessions.ipaddress, sessions.pin_2fa,
+    sessions.issued, sessions.expires,
+    sessions.expires<current_timestamp as expired
+from sessions
+where sessions.userid=%(uid)s and sessions.expires>current_timestamp-interval '3 hours'
+"""
+
     selectdev = """
 select
     devicetokens.id, devicetokens.device_name,
@@ -200,6 +210,11 @@ where devicetokens.userid=%(uid)s and devicetokens.expires>current_timestamp-int
         )
         results.tables["devicetokens"] = api.sql_tab2(
             conn, selectdev, {"uid": userid}, cm
+        )
+
+        cm = api.ColumnMap()
+        results.tables["sessions"] = api.sql_tab2(
+            conn, selectsess, {"uid": userid}, cm
         )
     return results.json_out()
 
@@ -489,6 +504,8 @@ def api_session_refresh(request):
     # Note that this end-point is effectively double auth-ed since it will
     # receive an access token cookie which is verified by the framework.
     token = request.cookies.get("YenotRefreshToken")
+    if token is None:
+        raise api.ForbiddenError("unknown-token", "No authenticated session to refresh.")
     claims = yenotauth.core.verify_jwt_exception(token, "refresh")
     session_id = claims["yenot-session-id"]
     refresh_pwd = claims["yenot-refresh-id"]
