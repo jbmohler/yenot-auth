@@ -150,6 +150,38 @@ returning sessions.id, sessions.refresh_hash, sessions.userid
     return session_id
 
 
+def communicate_2fa(target, session_id, pin6):
+    if os.getenv("YENOT_DEBUG") and os.getenv("YENOT_2FA_DIR"):
+        import codecs
+
+        dirname = os.environ["YENOT_2FA_DIR"]
+        seg = codecs.encode(session_id.encode("ascii"), "hex").decode("ascii")
+        fname = os.path.join(dirname, f"authpin-{seg}")
+        with open(fname, "w") as f:
+            f.write(pin6)
+
+        # NOTE:  debug write-to-file supersedes real 2fa notifications for
+        # test-run efficiency
+        return
+
+    if "sms" in target:
+        from twilio.rest import Client
+
+        # put your own credentials here
+
+        account_sid = app.config["twilio"].account_sid
+        auth_token = app.config["twilio"].auth_token
+        src_phone = app.config["twilio"].src_phone
+
+        pin6s = f"{pin6[:3]} {pin6[3:]}"
+        client = Client(account_sid, auth_token)
+        client.messages.create(
+            to=target["sms"],
+            from_=src_phone,
+            body=f"Your one-time PIN is {pin6s}",
+        )
+
+
 @app.post("/api/session", name="api_session", skip=["yenot-auth"])
 def api_session(request):
     username = request.forms.get("username")
@@ -313,8 +345,9 @@ def api_session_by_pin(request):
             body = "Unknown user or wrong password"
             raise api.UnauthorizedError("unknown-credentials", body)
 
-        # TODO:  use os.urandom
-        pin6 = [str(random.randint(0, 9)) for _ in range(6)]
+        # TODO:  use os.urandom and store only a bcrypt hash
+        digits = [str(random.randint(0, 9)) for _ in range(6)]
+        pin6 = "".join(digits)
 
         session_id = generate_session_cookies(
             conn,
@@ -323,34 +356,10 @@ def api_session_by_pin(request):
             new_session_2fa=True,
             userid=row.id,
             ipaddress=ip,
-            pin_2fa="".join(pin6),
+            pin_2fa=pin6,
         )
 
-        t2fa = row.target_2fa
-        if "file" in t2fa:
-            import codecs
-
-            dirname = os.environ["YENOT_2FA_DIR"]
-            seg = codecs.encode(session_id.encode("ascii"), "hex").decode("ascii")
-            fname = os.path.join(dirname, f"authpin-{seg}")
-            with open(fname, "w") as f:
-                f.write("".join(pin6))
-        if "sms" in t2fa:
-            from twilio.rest import Client
-
-            # put your own credentials here
-
-            account_sid = app.config["twilio"].account_sid
-            auth_token = app.config["twilio"].auth_token
-            src_phone = app.config["twilio"].src_phone
-
-            pin6s = f"{''.join(pin6[:3])} {''.join(pin6[3:])}"
-            client = Client(account_sid, auth_token)
-            client.messages.create(
-                to=t2fa["sms"],
-                from_=src_phone,
-                body=f"Your one-time PIN is {pin6s}",
-            )
+        communicate_2fa(row.target_2fa, session_id, pin6)
 
         conn.commit()
 
