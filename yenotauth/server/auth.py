@@ -90,6 +90,7 @@ returning sessions.id, sessions.refresh_hash, sessions.userid
 """
 
     if create_new_session:
+        # TODO: only save pin_2fa as a bcrypt hash
         params = {
             "sid": session_id,
             "refhash": hashed,
@@ -345,9 +346,7 @@ def api_session_by_pin(request):
             body = "Unknown user or wrong password"
             raise api.UnauthorizedError("unknown-credentials", body)
 
-        # TODO:  use os.urandom and store only a bcrypt hash
-        digits = [str(random.randint(0, 9)) for _ in range(6)]
-        pin6 = "".join(digits)
+        pin6 = yenotauth.core.generate_pin6()
 
         session_id = generate_session_cookies(
             conn,
@@ -447,6 +446,7 @@ select id, userid, device_name, issued, expires, null::text as token
 from devicetokens
 where id=%(dtid)s"""
 
+    # TODO: use os.urandom
     dtid = "".join([f"{random.randrange(0, 2**16):04x}" for _ in range(8)])
     secret = "".join([f"{random.randrange(0, 2**16):04x}" for _ in range(8)])
     hashed = bcrypt.hashpw(secret.encode("utf8"), bcrypt.gensalt())

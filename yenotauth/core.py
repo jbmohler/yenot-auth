@@ -39,6 +39,15 @@ DURATION_2FA_TOKEN = 5 * 60  # 5 minutes
 DURATION_DEVICE_TOKEN_DAYS = 30
 
 
+def generate_pin6():
+    # a 6 digit pin has just under 20 bits of randomness, 3
+    # bytes has 24
+    gen1 = os.urandom(3)
+    gen2 = [256 ** i * b for i, b in enumerate(gen1)]
+    gen3 = gen2[0] * gen2[1] * gen2[2]
+    return f"{gen3:06}"[-6:]
+
+
 def generate_crypt_id24():
     g = base64.b64encode(os.urandom(18)).decode("ascii")  # 24 characters
     assert len(g) == 24
