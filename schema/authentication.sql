@@ -27,6 +27,17 @@ create table users (
   check ((pinhash is null and target_2fa is null) or (pinhash is not null and target_2fa is not null))
 );
 
+create table addresses (
+  id uuid primary key default uuid_generate_v1mc(),
+  userid uuid references users(id) not null,
+  addr_type varchar(20) CHECK (addr_type in ('phone', 'email')) not null,
+  address text not null,
+  is_primary boolean default false not null,
+  is_2fa_target boolean default false not null,
+  is_verified boolean default false not null,
+  verify_hash varchar(60) CHECK (verify_hash ~ '^[\x21-\x7F]*$')
+);
+
 create table roles (
   id uuid primary key default uuid_generate_v1mc(),
   role_name character varying(40) unique,

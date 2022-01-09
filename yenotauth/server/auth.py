@@ -209,6 +209,12 @@ where
     and not devicetokens.inactive
     and devicetokens.expires>current_timestamp"""
 
+    select2fa = """
+select id, addr_type, address
+from addresses
+where addresses.userid=%(uid)s and is_2fa_target
+"""
+
     results = api.Results()
     with app.dbconn() as conn:
         tokid = None
@@ -249,14 +255,26 @@ where
                 body = "Unknown user or wrong password"
             raise api.UnauthorizedError("unknown-credentials", body)
 
-        generate_session_cookies(
+        addr_2fa = api.sql_rows(conn, select2fa, {"uid": row.id})
+        req_2fa = len(addr_2fa) > 0
+
+        if req_2fa:
+            pin6 = yenotauth.core.generate_pin6()
+
+        session_id = generate_session_cookies(
             conn,
             results,
             create_new_session=True,
+            new_session_2fa=req_2fa,
             userid=row.id,
             devtok_id=tokid,
             ipaddress=ip,
+            pin_2fa=pin6,
         )
+
+        if req_2fa:
+            for target in addr_2fa:
+                communicate_2fa(target, session_id, pin6)
 
         conn.commit()
 

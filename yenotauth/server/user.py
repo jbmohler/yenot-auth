@@ -24,17 +24,32 @@ def post_api_user(request, userid=None):
             "full_name",
             "password",
             "pin",
-            "target_2fa",
             "inactive",
             "descr",
             "roles",
         ],
+    )
+    addresses = api.table_from_tab2(
+        "addresses",
+        amendments=["id", "userid"],
+        options=["addr_type", "address", "is_primary", "is_2fa_target"],
     )
 
     update_existing = request.route.method == "PUT"
 
     if len(user.rows) != 1:
         raise api.UserError("invalid-input", "Exactly one user required.")
+
+    for addr in addresses.rows:
+        if getattr(addr, "userid") is None and userid is None:
+            raise api.UserError(
+                "invalid-input",
+                "If userid is not specified in URL then no addresses can be upserted",
+            )
+
+        # no conditionals, ensure that these addresses are linked
+        # explicitly to the unique user being inserted/updated
+        addr.userid = userid
 
     insroles = """
 insert into userroles (userid, roleid)
@@ -65,20 +80,24 @@ from unnest(%(roles)s) rl"""
                         hashed = bcrypt.hashpw(row.pin.encode("utf8"), bcrypt.gensalt())
                         hashed = hashed.decode("ascii")
                         r2.pinhash = hashed
-                    elif c == "id" and getattr(row, "id", None) == None:
-                        if update_existing:
+                    elif c == "id":
+                        if update_existing and getattr(row, "id", None) == None:
                             r2.id = userid
+                        elif update_existing and getattr(row, "id", None) != userid:
+                            raise api.UserError(
+                                "invalid-parameter",
+                                "User id in payload and on URL must match",
+                            )
                         else:
                             r2.id = None
                     elif c == "username":
                         r2.username = row.username.upper()
-                    elif c == "target_2fa":
-                        r2.target_2fa = psycopg2.extras.Json(row.target_2fa)
                     else:
                         setattr(r2, c, getattr(row, c))
 
         with api.writeblock(conn) as w:
             w.upsert_rows("users", tt)
+            w.upsert_rows("addresses", addresses)
 
         if "roles" in user.DataRow.__slots__:
             api.sql_void(
@@ -108,10 +127,15 @@ select users.id, users.username, full_name, descr,
     inactive,
     pinhash is not null as has_pin,
     null as password,
-    null as pin,
-    target_2fa
+    null as pin
 from users
 where users.id=%(uid)s
+"""
+
+    selectaddr = """
+select id, addr_type, address, is_primary, is_2fa_target, is_verified
+from addresses
+where userid=%(uid)s
 """
 
     selectroles = """
@@ -169,6 +193,8 @@ where devicetokens.userid=%(uid)s and devicetokens.expires>current_timestamp-int
             rows = api.tab2_rows_default(cols, [None], default_row)
         results.tables["user", True] = cols, rows
 
+        results.tables["addresses"] = api.sql_tab2(conn, selectaddr, {"uid": userid})
+
         cm = api.ColumnMap(
             id=api.cgen.yenot_role.surrogate(),
             role_name=api.cgen.yenot_role.name(
@@ -190,12 +216,93 @@ where devicetokens.userid=%(uid)s and devicetokens.expires>current_timestamp-int
     return results.json_out()
 
 
+@app.get("/api/user/me/address/new", name="get_api_user_me_address_new")
+@app.get("/api/user/<userid>/address/new", name="get_api_user_address_new")
+def get_api_user_address(userid=None):
+    select = """
+select id, addr_type, address, is_primary, is_2fa_target
+from addresses
+where false;
+"""
+
+    results = api.Results()
+    with app.dbconn() as conn:
+        if userid is None:
+            active = api.active_user(conn)
+            userid = active.id
+
+        cols, rows = api.sql_tab2(conn, select)
+
+        def default_row(index, row):
+            row.id = str(uuid.uuid1())
+            row.userid = userid
+            row.is_primary = False
+            row.is_2fa_target = False
+
+        rows = api.tab2_rows_default(cols, [None], default_row)
+        results.tables["address", True] = cols, rows
+    return results.json_out()
+
+
+@app.put("/api/user/<userid>/address/<addrid>", name="put_api_user_address")
+def put_api_user_address(userid, addrid):
+    address = api.table_from_tab2(
+        "address",
+        amendments=["id", "userid"],
+        options=["addr_type", "address", "is_primary", "is_2fa_target"],
+    )
+
+    address.rows[0].id = addrid
+    address.rows[0].userid = userid
+
+    with app.dbconn() as conn:
+        with api.writeblock(conn) as w:
+            w.upsert_rows("addresses", address)
+        conn.commit()
+    return api.Results().json_out()
+
+
+@app.delete("/api/user/<userid>/address/<addrid>", name="delete_api_user_address")
+def delete_api_user_address(userid, addrid):
+    delete = """
+delete from addresses where userid=%(uid)s and id=%(aid)s;
+"""
+
+    with app.dbconn() as conn:
+        active = api.active_user(conn)
+        if active.id == userid:
+            raise api.UserError(
+                "data-validation",
+                "The authenticated user cannot delete their own account.",
+            )
+
+        api.sql_void(conn, delete, {"uid": userid, "aid": addrid})
+        conn.commit()
+    return api.Results().json_out()
+
+
+@app.delete("/api/user/me/address/<addrid>", name="delete_api_user_me_address")
+def delete_api_user_me_address(userid, addrid):
+    delete = """
+delete from addresses where userid=%(uid)s and id=%(aid)s;
+"""
+
+    with app.dbconn() as conn:
+        active = api.active_user(conn)
+        userid = active.id
+
+        api.sql_void(conn, delete, {"uid": userid, "aid": addrid})
+        conn.commit()
+    return api.Results().json_out()
+
+
 @app.delete("/api/user/<userid>", name="delete_api_user_record")
 def delete_api_user_record(userid):
     # consider using cascade
     delete = """
 delete from userroles where userid=%(uid)s;
 delete from sessions where userid=%(uid)s;
+delete from addresses where userid=%(uid)s;
 delete from users where id=%(uid)s;
 """
 
@@ -253,6 +360,8 @@ update users set pwhash=%(h)s where id=%(i)s"""
 
 @app.post("/api/user/me/change-pin", name="api_user_me_change_pin")
 def api_user_me_change_pin(request):
+    raise api.UserError("deprecated", "User PIN with 2fa is no longer supported")
+
     oldpass = request.forms.get("oldpass")
     newpin = request.forms.get("newpin")
     t2fa = json.loads(request.forms.get("target_2fa"))

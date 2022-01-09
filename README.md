@@ -28,18 +28,18 @@ and rotating refresh tokens are likely coming soon.
 
 Provision JWT claims to be implemented.
 
-|                  | access       | refresh                 | device                  | 2fa-verify     |
-|------------------|--------------|-------------------------|-------------------------|----------------|
-| iss              | ????         | ???                     | ???                     | ???            |
-| sub              | userid       | userid                  | userid                  | userid         |
-| aud              | https://.../ | https://.../api/session | https://.../api/session | ????           |
-| exp              | 60 minutes   | 60 minutes              | 60 days (flexible)      | 10 minutes     |
-| nbf              | 0            | 0                       | 0                       | 0              |
-| iat              | 0            | 0                       | 0                       | 0              |
-| yenot-session-id | session id   | session id              |                         | session-id     |
-| yenot-refresh-id |              | refresh id              |                         |                |
+|                  | access       | refresh                 | device                  | 2fa-verify     | invite    |
+|------------------|--------------|-------------------------|-------------------------|----------------|-----------|
+| iss              | ????         | ???                     | ???                     | ???            | ???
+| sub              | userid       | userid                  | userid                  | userid         | userid (?)
+| aud              | https://.../ | https://.../api/session | https://.../api/session | ????           | .../session
+| exp              | 60 minutes   | 60 minutes              | 60 days (flexible)      | 10 minutes     | 7 days (flex)
+| nbf              | 0            | 0                       | 0                       | 0              | 0
+| iat              | 0            | 0                       | 0                       | 0              | 0
+| yenot-session-id | session id   | session id              |                         | session-id     | session-id
+| yenot-refresh-id |              | refresh id              |                         |                | refresh-id
 | yenot-device-id  |              |                         | device auth id          |                |
-| yenot-type       | access       | refresh                 | device                  | 2fa-verify     |
+| yenot-type       | access       | refresh                 | device                  | 2fa-verify     | invite
 
 # Philosophy and Literature
 
