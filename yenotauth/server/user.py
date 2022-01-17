@@ -27,18 +27,30 @@ def post_api_user(request, userid=None):
             "inactive",
             "descr",
             "roles",
+            "roles_add",
+            "roles_del",
         ],
     )
     addresses = api.table_from_tab2(
         "addresses",
+        default_missing=True,
         amendments=["id", "userid"],
         options=["addr_type", "address", "is_primary", "is_2fa_target"],
     )
 
-    update_existing = request.route.method == "PUT"
-
     if len(user.rows) != 1:
         raise api.UserError("invalid-input", "Exactly one user required.")
+
+    update_existing = request.route.method == "PUT"
+    if update_existing:
+        if user.rows[0].id not in (None, userid):
+            raise api.UserError(
+                "invalid-input",
+                "The provided user record has a record id which does not match the URL.",
+            )
+
+        for row in user.rows:
+            row.id = userid
 
     for addr in addresses.rows:
         if getattr(addr, "userid") is None and userid is None:
@@ -55,6 +67,12 @@ def post_api_user(request, userid=None):
 insert into userroles (userid, roleid)
 select (select id from users where username=%(un)s), rl.rl::uuid
 from unnest(%(roles)s) rl"""
+    delroles = """
+with roles_del as (
+    select unnest(%(roles)s::uuid[]) as r
+)
+delete from userroles
+where userid=%(uid)s and roleid in (select r from roles_del)"""
 
     with app.dbconn() as conn:
         columns = []
@@ -63,7 +81,7 @@ from unnest(%(roles)s) rl"""
                 columns.append("pwhash")
             elif c == "pin":
                 columns.append("pinhash")
-            elif c != "roles":
+            elif c not in ("roles", "roles_add", "roles_del"):
                 columns.append(c)
 
         tt = rtlib.simple_table(columns)
@@ -80,16 +98,6 @@ from unnest(%(roles)s) rl"""
                         hashed = bcrypt.hashpw(row.pin.encode("utf8"), bcrypt.gensalt())
                         hashed = hashed.decode("ascii")
                         r2.pinhash = hashed
-                    elif c == "id":
-                        if update_existing and getattr(row, "id", None) == None:
-                            r2.id = userid
-                        elif update_existing and getattr(row, "id", None) != userid:
-                            raise api.UserError(
-                                "invalid-parameter",
-                                "User id in payload and on URL must match",
-                            )
-                        else:
-                            r2.id = None
                     elif c == "username":
                         r2.username = row.username.upper()
                     else:
@@ -99,10 +107,22 @@ from unnest(%(roles)s) rl"""
             w.upsert_rows("users", tt)
             w.upsert_rows("addresses", addresses)
 
-        if "roles" in user.DataRow.__slots__:
-            api.sql_void(
-                conn, insroles, {"un": tt.rows[0].username, "roles": user.rows[0].roles}
-            )
+        if "roles" in user.DataRow.__slots__ or "roles_add" in user.DataRow.__slots__:
+            adds = "roles" if "roles" in user.DataRow.__slots__ else "roles_add"
+            add_list = getattr(user.rows[0], adds)
+            if add_list:
+                api.sql_void(
+                    conn, insroles, {"un": tt.rows[0].username, "roles": add_list}
+                )
+        if "roles_del" in user.DataRow.__slots__:
+            if not update_existing:
+                raise api.UserError(
+                    "invalid-parameter", "Only allow role deletion on PUT variant"
+                )
+            if user.rows[0].roles_del:
+                api.sql_void(
+                    conn, delroles, {"uid": userid, "roles": user.rows[0].roles_del}
+                )
 
         conn.commit()
     return api.Results().json_out()
@@ -127,7 +147,8 @@ select users.id, users.username, full_name, descr,
     inactive,
     pinhash is not null as has_pin,
     null as password,
-    null as pin
+    null as pin,
+    (select array_agg(userroles.roleid::text) from userroles where userroles.userid=%(uid)s) as roles
 from users
 where users.id=%(uid)s
 """
@@ -160,6 +181,7 @@ where sessions.userid=%(uid)s and sessions.expires>current_timestamp-interval '3
     selectdev = """
 select
     devicetokens.id, devicetokens.device_name,
+    devicetokens.inactive,
     devicetokens.issued, devicetokens.expires,
     devicetokens.expires<current_timestamp as expired,
     x.last_session_expires
@@ -180,8 +202,9 @@ where devicetokens.userid=%(uid)s and devicetokens.expires>current_timestamp-int
             id=api.cgen.yenot_user.surrogate(),
             username=api.cgen.yenot_user.name(url_key="id", represents=True),
             has_pin=api.cgen.auto(skip_write=True),
-            password=api.cgen.auto(skip_write=userid != None),
+            password=api.cgen.auto(),
             pin=api.cgen.auto(skip_write=userid != None),
+            roles=api.cgen.stringlist(hidden=True),
         )
         cols, rows = api.sql_tab2(conn, select, {"uid": userid}, cm)
 
@@ -189,6 +212,9 @@ where devicetokens.userid=%(uid)s and devicetokens.expires>current_timestamp-int
 
             def default_row(index, row):
                 row.id = str(uuid.uuid1())
+                # TODO: would be nice to default roles with the basic login
+                # role, but that is not a universal knowable
+                row.roles = []
 
             rows = api.tab2_rows_default(cols, [None], default_row)
         results.tables["user", True] = cols, rows
@@ -218,9 +244,9 @@ where devicetokens.userid=%(uid)s and devicetokens.expires>current_timestamp-int
 
 @app.get("/api/user/me/address/new", name="get_api_user_me_address_new")
 @app.get("/api/user/<userid>/address/new", name="get_api_user_address_new")
-def get_api_user_address(userid=None):
+def get_api_user_address_new(userid=None):
     select = """
-select id, addr_type, address, is_primary, is_2fa_target
+select id, addr_type, address, is_primary, is_2fa_target, is_verified
 from addresses
 where false;
 """
@@ -231,21 +257,52 @@ where false;
             active = api.active_user(conn)
             userid = active.id
 
-        cols, rows = api.sql_tab2(conn, select)
+        cm = api.ColumnMap(
+            id=api.cgen.yenot_user_address.surrogate(),
+            is_verified=api.cgen.auto(skip_write=True),
+        )
+        cols, rows = api.sql_tab2(conn, select, column_map=cm)
 
         def default_row(index, row):
             row.id = str(uuid.uuid1())
             row.userid = userid
             row.is_primary = False
             row.is_2fa_target = False
+            row.is_verified = False
 
         rows = api.tab2_rows_default(cols, [None], default_row)
         results.tables["address", True] = cols, rows
     return results.json_out()
 
 
+@app.get("/api/user/me/address/<addrid>", name="get_api_user_me_address")
+@app.get("/api/user/<userid>/address/<addrid>", name="get_api_user_address")
+def get_api_user_address(userid=None, addrid=None):
+    select = """
+select id, addr_type, address, is_primary, is_2fa_target, is_verified
+from addresses
+where userid=%(uid)s and id=%(aid)s;
+"""
+
+    results = api.Results()
+    with app.dbconn() as conn:
+        if userid is None:
+            active = api.active_user(conn)
+            userid = active.id
+
+        cm = api.ColumnMap(
+            id=api.cgen.yenot_user_address.surrogate(),
+            is_verified=api.cgen.auto(skip_write=True),
+        )
+        results.tables["address", True] = api.sql_tab2(
+            conn, select, {"uid": userid, "aid": addrid}, cm
+        )
+    return results.json_out()
+
+
+@app.put("/api/user/me/address/<addrid>", name="put_api_user_me_address")
 @app.put("/api/user/<userid>/address/<addrid>", name="put_api_user_address")
-def put_api_user_address(userid, addrid):
+def put_api_user_address(userid="me", addrid=None):
     address = api.table_from_tab2(
         "address",
         amendments=["id", "userid"],
@@ -256,6 +313,10 @@ def put_api_user_address(userid, addrid):
     address.rows[0].userid = userid
 
     with app.dbconn() as conn:
+        if userid == "me":
+            active = api.active_user(conn)
+            userid = active.id
+
         with api.writeblock(conn) as w:
             w.upsert_rows("addresses", address)
         conn.commit()
@@ -269,13 +330,6 @@ delete from addresses where userid=%(uid)s and id=%(aid)s;
 """
 
     with app.dbconn() as conn:
-        active = api.active_user(conn)
-        if active.id == userid:
-            raise api.UserError(
-                "data-validation",
-                "The authenticated user cannot delete their own account.",
-            )
-
         api.sql_void(conn, delete, {"uid": userid, "aid": addrid})
         conn.commit()
     return api.Results().json_out()
@@ -409,7 +463,7 @@ left outer join (select userid, count(*) from sessions where not inactive group 
 left outer join (
     select 
         userid, 
-        string_agg(roles.role_name, '; ' order by role_name) as rolenames
+        array_agg(roles.role_name order by roles.sort) as rolenames
     from userroles 
     join roles on roles.id=userroles.roleid
     group by userid) as userroles2 on userroles2.userid=users.id
@@ -436,6 +490,7 @@ order by users.username
             id=api.cgen.yenot_user.surrogate(),
             username=api.cgen.yenot_user.name(url_key="id", represents=True),
             count=api.cgen.auto(label="Active Sessions"),
+            roles=api.cgen.stringlist(),
         )
 
         results.tables["users", True] = api.sql_tab2(conn, select, params, cm)

@@ -1,4 +1,3 @@
-import os
 import uuid
 import time
 import datetime
@@ -6,6 +5,7 @@ import random
 import bcrypt
 import yenot.backend.api as api
 import yenotauth.core
+from . import messaging
 
 app = api.get_global_app()
 
@@ -39,6 +39,7 @@ def generate_session_cookies(
     *,
     create_new_session=False,
     new_session_2fa=False,
+    invite_token=False,
     sessrow=None,
     userid=None,
     devtok_id=None,
@@ -64,11 +65,19 @@ def generate_session_cookies(
         hashed = bcrypt.hashpw(refresh_pwd.encode("utf8"), bcrypt.gensalt())
         hashed = hashed.decode("ascii")
 
-    duration = (
-        yenotauth.core.DURATION_ACCESS_TOKEN
-        if not new_session_2fa
-        else yenotauth.core.DURATION_2FA_TOKEN
-    )
+    token_type = None
+    if new_session_2fa:
+        token_type = "2fa-verify"
+    elif invite_token:
+        token_type = "invite"
+    else:
+        token_type = "access"
+
+    duration = {
+        "2fa-verify": yenotauth.core.DURATION_2FA_TOKEN,
+        "invite": yenotauth.core.DURATION_INVITE,
+        "access": yenotauth.core.DURATION_ACCESS_TOKEN,
+    }[token_type]
 
     issued = time.time()
     expires = issued + duration
@@ -106,16 +115,25 @@ returning sessions.id, sessions.refresh_hash, sessions.userid
         params = {"sid": session_id, "rid": hashed, "exp": expires}
         api.sql_void(conn, sess_update, params)
 
-    access_token = yenotauth.core.session_token(
-        userid,
-        issued,
-        expires,
-        {
-            "yenot-session-id": session_id,
-            "yenot-type": "access" if not new_session_2fa else "2fa-verify",
-        },
-    )
-    if not new_session_2fa:
+    if not invite_token:
+        access_token = yenotauth.core.session_token(
+            userid,
+            issued,
+            expires,
+            {"yenot-session-id": session_id, "yenot-type": token_type},
+        )
+    else:
+        access_token = yenotauth.core.session_token(
+            userid,
+            issued,
+            expires,
+            {
+                "yenot-session-id": session_id,
+                "yenot-refresh-id": refresh_pwd,
+                "yenot-type": token_type,
+            },
+        )
+    if token_type == "access":
         refresh_token = yenotauth.core.session_token(
             userid,
             issued,
@@ -127,11 +145,11 @@ returning sessions.id, sessions.refresh_hash, sessions.userid
             },
         )
 
-    # Perhaps there is a condition in which we set these in the payload
-    if False:
-        results.keys["access_token"] = access_token
-        results.keys["refresh_token"] = refresh_token
-    if not new_session_2fa:
+    # Refresh & access tokens go only as httponly cookies.  They are never
+    # returned in the payload.
+    if token_type == "invite":
+        results.keys["invite_token"] = access_token
+    if token_type == "access":
         results.keys["userid"] = userid
         results.keys["username"] = api.sql_1row(
             conn,
@@ -142,45 +160,14 @@ returning sessions.id, sessions.refresh_hash, sessions.userid
             conn, CAPS_SELECT, {"sid": session_id}
         )
 
-    results.set_cookie("YenotToken", access_token, httponly=True, path="/")
-    if not new_session_2fa:
-        results.set_cookie(
-            "YenotRefreshToken", refresh_token, httponly=True, path="/api/session"
-        )
+    if token_type != "invite":
+        results.set_cookie("YenotToken", access_token, httponly=True, path="/")
+        if not new_session_2fa:
+            results.set_cookie(
+                "YenotRefreshToken", refresh_token, httponly=True, path="/api/session"
+            )
 
     return session_id
-
-
-def communicate_2fa(target, session_id, pin6):
-    if os.getenv("YENOT_DEBUG") and os.getenv("YENOT_2FA_DIR"):
-        import codecs
-
-        dirname = os.environ["YENOT_2FA_DIR"]
-        seg = codecs.encode(session_id.encode("ascii"), "hex").decode("ascii")
-        fname = os.path.join(dirname, f"authpin-{seg}")
-        with open(fname, "w") as f:
-            f.write(pin6)
-
-        # NOTE:  debug write-to-file supersedes real 2fa notifications for
-        # test-run efficiency
-        return
-
-    if "sms" in target:
-        from twilio.rest import Client
-
-        # put your own credentials here
-
-        account_sid = app.config["twilio"].account_sid
-        auth_token = app.config["twilio"].auth_token
-        src_phone = app.config["twilio"].src_phone
-
-        pin6s = f"{pin6[:3]} {pin6[3:]}"
-        client = Client(account_sid, auth_token)
-        client.messages.create(
-            to=target["sms"],
-            from_=src_phone,
-            body=f"Your one-time PIN is {pin6s}",
-        )
 
 
 @app.post("/api/session", name="api_session", skip=["yenot-auth"])
@@ -258,8 +245,7 @@ where addresses.userid=%(uid)s and is_2fa_target
         addr_2fa = api.sql_rows(conn, select2fa, {"uid": row.id})
         req_2fa = len(addr_2fa) > 0
 
-        if req_2fa:
-            pin6 = yenotauth.core.generate_pin6()
+        pin6 = yenotauth.core.generate_pin6() if req_2fa else None
 
         session_id = generate_session_cookies(
             conn,
@@ -274,7 +260,7 @@ where addresses.userid=%(uid)s and is_2fa_target
 
         if req_2fa:
             for target in addr_2fa:
-                communicate_2fa(target, session_id, pin6)
+                messaging.communicate_2fa(target, session_id, pin6)
 
         conn.commit()
 
@@ -337,7 +323,7 @@ def api_session_by_pin(request):
     pin = request.forms.get("pin")
     ip = request.environ.get("REMOTE_ADDR")
 
-    select = "select id, username, pinhash, target_2fa, inactive from users where username=%(user)s"
+    select = "select id, username, pinhash, inactive from users where username=%(user)s"
 
     results = api.Results()
     with app.dbconn() as conn:
@@ -376,7 +362,7 @@ def api_session_by_pin(request):
             pin_2fa=pin6,
         )
 
-        communicate_2fa(row.target_2fa, session_id, pin6)
+        messaging.communicate_2fa(row.target_2fa, session_id, pin6)
 
         conn.commit()
 
@@ -430,6 +416,36 @@ update sessions set inactive=true where id=%(sid)s"""
     with app.dbconn() as conn:
         api.sql_void(conn, update, {"sid": session})
         conn.commit()
+    return api.Results().json_out()
+
+
+@app.put("/api/user/<userid>/send-invite", name="put_api_user_send_invite")
+def put_api_user_send_invite(userid):
+    # prefer primary or 2fa-targets
+    select = """
+select id, addr_type, address, is_2fa_target, is_primary
+from addresses
+where userid=%(uid)s
+order by case when is_primary then 0 else 1 end, case when is_2fa_target then 0 else 1 end
+limit 1
+"""
+
+    results = api.Results()
+    with app.dbconn() as conn:
+        target = api.sql_1row(conn, select, {"uid": userid})
+
+        # TODO:  I feel like I should validate the user, but the appearance of an address does so?
+
+        session_id = generate_session_cookies(
+            conn,
+            results,
+            create_new_session=True,
+            invite_token=True,
+            userid=userid,
+        )
+
+        messaging.communicate_invite(target, session_id, token)
+
     return api.Results().json_out()
 
 
@@ -491,6 +507,15 @@ where id=%(dtid)s"""
         rows = api.tab2_rows_transform((columns, rows), columns, xform_token)
         results.tables["device_token", True] = columns, rows
     return results.json_out()
+
+
+@app.delete("/api/user/me/device-token/<devid>", name="delete_api_user_me_device_token")
+def delete_api_user_me_device_token(devid):
+    with app.dbconn() as conn:
+        active = api.active_user(conn)
+        userid = active.id
+
+    return delete_api_user_device_token(userid, devid)
 
 
 @app.delete(

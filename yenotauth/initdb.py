@@ -8,11 +8,14 @@ USER_ROLE = ("User", 1)
 PUBLIC_ACTS = ["api_session", "api_session_by_pin", "api_session_promote_2fa"]
 
 USER_ACTS = [
+    "get_api_user_me_record",
     "api_user_me_change_password",
     "api_user_me_change_pin",
-    "get_api_user_me_record",
+    "get_api_user_me_address_new",
+    "get_api_user_me_address",
+    "put_api_user_me_address",
+    "delete_api_user_me_address",
     "post_api_user_device_token_new",
-    "delete_api_user_device_token",
     "api_session_logout",
     "api_user_reports",
 ]
@@ -23,6 +26,11 @@ SYS_ADMIN_ACTS = [
     "get_api_user_record",
     "api_endpoints",
     "api_users_lastlogin",
+    "delete_api_user_device_token",
+    "get_api_user_address_new",
+    "get_api_user_address",
+    "put_api_user_address",
+    "delete_api_user_address",
     "get_api_roles_list",
     "get_api_role_new",
     "get_api_role_record",

@@ -20,11 +20,9 @@ create table users (
   username varchar(20) not null unique,
   pwhash varchar(60) CHECK (pwhash ~ '^[\x21-\x7F]*$'),
   pinhash varchar(60) CHECK (pinhash ~ '^[\x21-\x7F]*$'),
-  target_2fa json,
   full_name text,
   descr text,
-  inactive boolean not null default false,
-  check ((pinhash is null and target_2fa is null) or (pinhash is not null and target_2fa is not null))
+  inactive boolean not null default false
 );
 
 create table addresses (

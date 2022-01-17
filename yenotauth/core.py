@@ -35,6 +35,7 @@ def endpoints(self):
 
 # access and refresh tokens have the same duration but different audiences
 DURATION_ACCESS_TOKEN = 60 * 60  # 1 hour
+DURATION_INVITE = 24 * 60 * 60  # 1 day
 DURATION_2FA_TOKEN = 5 * 60  # 5 minutes
 DURATION_DEVICE_TOKEN_DAYS = 30
 
