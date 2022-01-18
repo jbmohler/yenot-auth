@@ -300,23 +300,38 @@ where userid=%(uid)s and id=%(aid)s;
     return results.json_out()
 
 
+def _raise_payload_match(row, attr, urlvalue):
+    value = getattr(row, attr, None)
+    if value and value != urlvalue:
+        raise api.UserError(
+            "invalid-input",
+            "The provided user record has a record id which does not match the URL.",
+        )
+
+
 @app.put("/api/user/me/address/<addrid>", name="put_api_user_me_address")
+def put_api_user_address(addrid):
+    with app.dbconn() as conn:
+        active = api.active_user(conn)
+
+    return put_api_user_address(active.id, addrid)
+
+
 @app.put("/api/user/<userid>/address/<addrid>", name="put_api_user_address")
-def put_api_user_address(userid="me", addrid=None):
+def put_api_user_address(userid, addrid):
     address = api.table_from_tab2(
         "address",
         amendments=["id", "userid"],
         options=["addr_type", "address", "is_primary", "is_2fa_target"],
     )
 
+    _raise_payload_match(address.rows[0], "id", addrid)
+    _raise_payload_match(address.rows[0], "userid", userid)
+
     address.rows[0].id = addrid
     address.rows[0].userid = userid
 
     with app.dbconn() as conn:
-        if userid == "me":
-            active = api.active_user(conn)
-            userid = active.id
-
         with api.writeblock(conn) as w:
             w.upsert_rows("addresses", address)
         conn.commit()

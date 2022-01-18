@@ -160,6 +160,9 @@ returning sessions.id, sessions.refresh_hash, sessions.userid
             conn, CAPS_SELECT, {"sid": session_id}
         )
 
+    if token_type == "2fa-verify":
+        results.keys['2fa-prompt'] = True
+
     if token_type != "invite":
         results.set_cookie("YenotToken", access_token, httponly=True, path="/")
         if not new_session_2fa:
@@ -460,8 +463,9 @@ def decode_device_token(devtoken):
     return tokid, secret
 
 
+@app.post("/api/user/me/device-token/new", name="post_api_user_me_device_token_new")
 @app.post("/api/user/<userid>/device-token/new", name="post_api_user_device_token_new")
-def post_api_user_device_token_new(request, userid):
+def post_api_user_device_token_new(request, userid=None):
     device_name = request.params.get("device_name", None)
     expdays = int(
         request.params.get("expdays", yenotauth.core.DURATION_DEVICE_TOKEN_DAYS)
@@ -485,6 +489,10 @@ where id=%(dtid)s"""
     secret = "".join([f"{random.randrange(0, 2**16):04x}" for _ in range(8)])
     hashed = bcrypt.hashpw(secret.encode("utf8"), bcrypt.gensalt())
     hashed = hashed.decode("ascii")
+
+    with app.dbconn() as conn:
+        active = api.active_user(conn)
+        userid = active.id
 
     params = {
         "id": dtid,

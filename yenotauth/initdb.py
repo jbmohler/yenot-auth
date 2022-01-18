@@ -15,7 +15,7 @@ USER_ACTS = [
     "get_api_user_me_address",
     "put_api_user_me_address",
     "delete_api_user_me_address",
-    "post_api_user_device_token_new",
+    "post_api_user_me_device_token_new",
     "api_session_logout",
     "api_user_reports",
 ]
@@ -26,6 +26,7 @@ SYS_ADMIN_ACTS = [
     "get_api_user_record",
     "api_endpoints",
     "api_users_lastlogin",
+    "post_api_user_device_token_new",
     "delete_api_user_device_token",
     "get_api_user_address_new",
     "get_api_user_address",
