@@ -13,6 +13,60 @@ def user_sidebar(idcolumn):
     return [{"name": "user_general", "on_highlight_row": {"id": idcolumn}}]
 
 
+# NOTE & TODO - Many end-points here come in 2 variants as (1) the admin
+# version "/api/user/<userid>" and (2) the user version "/api/user/me".  It is
+# imperative that the user version be declared before the admin version to the
+# URL router.  For decorators, that means the user version needs to come
+# _last_.
+
+
+@app.put("/api/user/me", name="put_api_user_me")
+def put_api_user_me(request):
+    user = api.table_from_tab2(
+        "user",
+        amendments=["id"],
+        options=[
+            "full_name",
+            "password",
+            "descr",
+        ],
+    )
+
+    if len(user.rows) != 1:
+        raise api.UserError("invalid-input", "Exactly one user required.")
+
+    with app.dbconn() as conn:
+        active = api.active_user(conn)
+
+        columns = []
+        for c in user.DataRow.__slots__:
+            if c == "password":
+                columns.append("pwhash")
+            else:
+                columns.append(c)
+
+        tt = rtlib.simple_table(columns)
+        for row in user.rows:
+            with tt.adding_row() as r2:
+                for c in user.DataRow.__slots__:
+                    if c == "id":
+                        r2.id = active.id
+                    elif c == "password":
+                        hashed = bcrypt.hashpw(
+                            row.password.encode("utf8"), bcrypt.gensalt()
+                        )
+                        hashed = hashed.decode("ascii")
+                        r2.pwhash = hashed
+                    else:
+                        setattr(r2, c, getattr(row, c))
+
+        with api.writeblock(conn) as w:
+            w.update_rows("users", tt)
+
+        conn.commit()
+    return api.Results().json_out()
+
+
 @app.put("/api/user/<userid>", name="put_api_user")
 @app.post("/api/user", name="post_api_user")
 def post_api_user(request, userid=None):
@@ -338,20 +392,8 @@ def put_api_user_address(userid, addrid):
     return api.Results().json_out()
 
 
-@app.delete("/api/user/<userid>/address/<addrid>", name="delete_api_user_address")
-def delete_api_user_address(userid, addrid):
-    delete = """
-delete from addresses where userid=%(uid)s and id=%(aid)s;
-"""
-
-    with app.dbconn() as conn:
-        api.sql_void(conn, delete, {"uid": userid, "aid": addrid})
-        conn.commit()
-    return api.Results().json_out()
-
-
 @app.delete("/api/user/me/address/<addrid>", name="delete_api_user_me_address")
-def delete_api_user_me_address(userid, addrid):
+def delete_api_user_me_address(addrid):
     delete = """
 delete from addresses where userid=%(uid)s and id=%(aid)s;
 """
@@ -360,6 +402,18 @@ delete from addresses where userid=%(uid)s and id=%(aid)s;
         active = api.active_user(conn)
         userid = active.id
 
+        api.sql_void(conn, delete, {"uid": userid, "aid": addrid})
+        conn.commit()
+    return api.Results().json_out()
+
+
+@app.delete("/api/user/<userid>/address/<addrid>", name="delete_api_user_address")
+def delete_api_user_address(userid, addrid):
+    delete = """
+delete from addresses where userid=%(uid)s and id=%(aid)s;
+"""
+
+    with app.dbconn() as conn:
         api.sql_void(conn, delete, {"uid": userid, "aid": addrid})
         conn.commit()
     return api.Results().json_out()
