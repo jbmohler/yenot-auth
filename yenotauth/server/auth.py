@@ -161,7 +161,7 @@ returning sessions.id, sessions.refresh_hash, sessions.userid
         )
 
     if token_type == "2fa-verify":
-        results.keys['2fa-prompt'] = True
+        results.keys["2fa-prompt"] = True
 
     if token_type != "invite":
         results.set_cookie("YenotToken", access_token, httponly=True, path="/")
@@ -202,7 +202,7 @@ where
     select2fa = """
 select id, addr_type, address
 from addresses
-where addresses.userid=%(uid)s and is_2fa_target
+where addresses.userid=%(uid)s and is_2fa_target and is_verified
 """
 
     results = api.Results()
@@ -227,9 +227,7 @@ where addresses.userid=%(uid)s and is_2fa_target
             msg = "inactive-user"
         elif not row.comphash:
             msg = "no-password-configured"
-        elif bcrypt.hashpw(
-            secret.encode("utf8"), row.comphash.encode("utf8")
-        ) != row.comphash.encode("utf8"):
+        elif not bcrypt.checkpw(secret.encode("utf8"), row.comphash.encode("utf8")):
             msg = "incorrect-password"
         elif device_token and row.expires < datetime.datetime.utcnow():
             msg = "expired-token"
@@ -328,6 +326,12 @@ def api_session_by_pin(request):
 
     select = "select id, username, pinhash, inactive from users where username=%(user)s"
 
+    select2fa = """
+select id, addr_type, address
+from addresses
+where addresses.userid=%(uid)s and is_2fa_target and is_verified
+"""
+
     results = api.Results()
     with app.dbconn() as conn:
         row = api.sql_1object(conn, select, {"user": username.upper()})
@@ -340,15 +344,22 @@ def api_session_by_pin(request):
             msg = "inactive-user"
         elif row.pinhash == None:
             msg = "no pin login for this user"
-        elif bcrypt.hashpw(
-            pin.encode("utf8"), row.pinhash.encode("utf8")
-        ) != row.pinhash.encode("utf8"):
+        elif not bcrypt.checkpw(pin.encode("utf8"), row.pinhash.encode("utf8")):
             msg = "incorrect-pin"
         else:
             results.keys["status"] = f"welcome {row.username}"
 
         if msg:
             # show message in logs, but not to user
+            print(f"Login failed for {username.upper()}:  {msg}")
+            body = "Unknown user or wrong password"
+            raise api.UnauthorizedError("unknown-credentials", body)
+
+        addr_2fa = api.sql_rows(conn, select2fa, {"uid": row.id})
+        req_2fa = len(addr_2fa) > 0
+        if not req_2fa:
+            # show message in logs, but not to user
+            msg = "PIN matched, but 2FA required"
             print(f"Login failed for {username.upper()}:  {msg}")
             body = "Unknown user or wrong password"
             raise api.UnauthorizedError("unknown-credentials", body)
@@ -365,7 +376,8 @@ def api_session_by_pin(request):
             pin_2fa=pin6,
         )
 
-        messaging.communicate_2fa(row.target_2fa, session_id, pin6)
+        for target in addr_2fa:
+            messaging.communicate_2fa(target, session_id, pin6)
 
         conn.commit()
 
@@ -423,7 +435,7 @@ update sessions set inactive=true where id=%(sid)s"""
 
 
 @app.put("/api/user/<userid>/send-invite", name="put_api_user_send_invite")
-def put_api_user_send_invite(userid):
+def put_api_user_send_invite(request, userid):
     # prefer primary or 2fa-targets
     select = """
 select id, addr_type, address, is_2fa_target, is_primary
@@ -447,7 +459,8 @@ limit 1
             userid=userid,
         )
 
-        messaging.communicate_invite(target, session_id, token)
+        token = results.keys["invite_token"]
+        messaging.communicate_invite(target, session_id, request, token)
 
     return api.Results().json_out()
 

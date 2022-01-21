@@ -5,6 +5,7 @@ import psycopg2.extras
 import rtlib
 import yenot.backend.api as api
 import yenotauth.core
+from . import messaging
 
 app = api.get_global_app()
 
@@ -329,8 +330,8 @@ where false;
     return results.json_out()
 
 
-@app.get("/api/user/me/address/<addrid>", name="get_api_user_me_address")
 @app.get("/api/user/<userid>/address/<addrid>", name="get_api_user_address")
+@app.get("/api/user/me/address/<addrid>", name="get_api_user_me_address")
 def get_api_user_address(userid=None, addrid=None):
     select = """
 select id, addr_type, address, is_primary, is_2fa_target, is_verified
@@ -364,19 +365,27 @@ def _raise_payload_match(row, attr, urlvalue):
 
 
 @app.put("/api/user/me/address/<addrid>", name="put_api_user_me_address")
-def put_api_user_address(addrid):
+def put_api_user_me_address(request, addrid):
     with app.dbconn() as conn:
         active = api.active_user(conn)
 
-    return put_api_user_address(active.id, addrid)
+    return _put_api_user_address(request, active.id, addrid, admin=False)
 
 
 @app.put("/api/user/<userid>/address/<addrid>", name="put_api_user_address")
-def put_api_user_address(userid, addrid):
+def put_api_user_address(request, userid, addrid):
+    return _put_api_user_address(request, userid, addrid, admin=True)
+
+
+def _put_api_user_address(request, userid, addrid, admin):
+    extra = []
+    if admin:
+        extra.append("is_verified")
+
     address = api.table_from_tab2(
         "address",
         amendments=["id", "userid"],
-        options=["addr_type", "address", "is_primary", "is_2fa_target"],
+        options=["addr_type", "address", "is_primary", "is_2fa_target", *extra],
     )
 
     _raise_payload_match(address.rows[0], "id", addrid)
@@ -386,9 +395,102 @@ def put_api_user_address(userid, addrid):
     address.rows[0].userid = userid
 
     with app.dbconn() as conn:
+        select = "select count(*) from addresses where userid=%(uid)s and id=%(aid)s"
+        exists = api.sql_1row(conn, select, {"uid": userid, "aid": addrid})
+
+        if not admin and exists > 0:
+            banned = ["addr_type", "address"]
+            # Ordinary user cannot edit addr_type & address after the
+            # fact due to verification requirements.
+            included = set(banned).difference(address.DataRow.__slots__)
+            if len(included) > 0:
+                name = "address"
+                raise api.UserError(
+                    "invalid-collection",
+                    f'Post file "{name}" contains incorrect data.  Fields {included} cannot be updated after the address is added.',
+                )
+
         with api.writeblock(conn) as w:
             w.upsert_rows("addresses", address)
         conn.commit()
+
+        if not admin:
+            _send_verify(conn, request, userid, addrid)
+
+    return api.Results().json_out()
+
+
+@app.put(
+    "/api/user/me/address/<addrid>/send-verify",
+    name="put_api_user_me_address_send_verify",
+)
+def put_api_user_address_me_send_verify(request, addrid):
+    with app.dbconn() as conn:
+        active = api.active_user(conn)
+        _send_verify(conn, request, active.id, addrid)
+
+    return api.Results().json_out()
+
+
+@app.put(
+    "/api/user/<userid>/address/<addrid>/send-verify",
+    name="put_api_user_address_send_verify",
+)
+def put_api_user_address_send_verify(userid, addrid):
+    with app.dbconn() as conn:
+        _send_verify(conn, userid, addrid)
+
+    return api.Results().json_out()
+
+
+def _send_verify(conn, request, userid, addrid):
+    update = """
+update addresses set verify_hash=%(vhash)s
+where id=%(aid)s and userid=%(uid)s
+returning id, userid, addr_type, address
+"""
+
+    # TODO: consider a verify_expire column on the address so that verify
+    # codes have a (short) lifetime
+    verify = yenotauth.core.generate_pin6()
+
+    hashed = bcrypt.hashpw(verify.encode("utf8"), bcrypt.gensalt())
+    hashed = hashed.decode("ascii")
+
+    params = {"uid": userid, "aid": addrid, "vhash": hashed}
+    target = api.sql_1object(conn, update, params)
+    conn.commit()
+
+    messaging.communicate_verify(target, target.userid, request, target.id, verify)
+
+
+@app.put("/api/user/me/address/<addrid>/verify", name="put_api_user_me_address_verify")
+def put_api_user_me_address_verify(request, addrid):
+    confirmation = request.params.get("confirmation")
+
+    select = """
+select verify_hash
+from addresses
+where id=%(aid)s and userid=%(uid)s
+"""
+
+    update = """
+update addresses set is_verified=true
+where id=%(aid)s and userid=%(uid)s
+"""
+
+    with app.dbconn() as conn:
+        active = api.active_user(conn)
+
+        params = {"uid": active.id, "aid": addrid}
+        vhash = api.sql_1row(conn, select, params)
+
+        if not bcrypt.checkpw(confirmation.encode("utf8"), vhash.encode("utf8")):
+            raise api.UserError("invalid-password", "Verification PIN does not match.")
+
+        api.sql_void(conn, update, params)
+        conn.commit()
+
     return api.Results().json_out()
 
 
@@ -400,9 +502,8 @@ delete from addresses where userid=%(uid)s and id=%(aid)s;
 
     with app.dbconn() as conn:
         active = api.active_user(conn)
-        userid = active.id
 
-        api.sql_void(conn, delete, {"uid": userid, "aid": addrid})
+        api.sql_void(conn, delete, {"uid": active.id, "aid": addrid})
         conn.commit()
     return api.Results().json_out()
 
