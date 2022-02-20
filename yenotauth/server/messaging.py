@@ -72,11 +72,9 @@ def _internal_communicate(target, filebase, value, subject, longbody, shortbody)
 def send_sms(phone, body):
     from twilio.rest import Client
 
-    # credentials sourced from commandline
-    # TODO:  consider whether should just be from env
-    account_sid = app.config["twilio"].account_sid
-    auth_token = app.config["twilio"].auth_token
-    src_phone = app.config["twilio"].src_phone
+    account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+    auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+    src_phone = os.getenv("TWILIO_SRC_PHONE")
 
     client = Client(account_sid, auth_token)
     client.messages.create(to=phone, from_=src_phone, body=body)
