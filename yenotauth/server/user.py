@@ -82,9 +82,8 @@ def post_api_user(request, userid=None):
             "inactive",
             "descr",
             "roles",
-            "roles_add",
-            "roles_del",
         ],
+        matrix=["roles"],
     )
     addresses = api.table_from_tab2(
         "addresses",
@@ -118,17 +117,6 @@ def post_api_user(request, userid=None):
         # explicitly to the unique user being inserted/updated
         addr.userid = userid
 
-    insroles = """
-insert into userroles (userid, roleid)
-select (select id from users where username=%(un)s), rl.rl::uuid
-from unnest(%(roles)s) rl"""
-    delroles = """
-with roles_del as (
-    select unnest(%(roles)s::uuid[]) as r
-)
-delete from userroles
-where userid=%(uid)s and roleid in (select r from roles_del)"""
-
     with app.dbconn() as conn:
         columns = []
         for c in user.DataRow.__slots__:
@@ -136,20 +124,22 @@ where userid=%(uid)s and roleid in (select r from roles_del)"""
                 columns.append("pwhash")
             elif c == "pin":
                 columns.append("pinhash")
-            elif c not in ("roles", "roles_add", "roles_del"):
+            else:
                 columns.append(c)
 
         tt = rtlib.simple_table(columns)
+        # TODO: in-elegant table transformation code for matrix columns
+        tt.matrices = user.matrices
         for row in user.rows:
             with tt.adding_row() as r2:
                 for c in user.DataRow.__slots__:
-                    if c == "password":
+                    if c == "password" and row.password is not None:
                         hashed = bcrypt.hashpw(
                             row.password.encode("utf8"), bcrypt.gensalt()
                         )
                         hashed = hashed.decode("ascii")
                         r2.pwhash = hashed
-                    elif c == "pin":
+                    elif c == "pin" and row.pin is not None:
                         hashed = bcrypt.hashpw(row.pin.encode("utf8"), bcrypt.gensalt())
                         hashed = hashed.decode("ascii")
                         r2.pinhash = hashed
@@ -159,25 +149,8 @@ where userid=%(uid)s and roleid in (select r from roles_del)"""
                         setattr(r2, c, getattr(row, c))
 
         with api.writeblock(conn) as w:
-            w.upsert_rows("users", tt)
+            w.upsert_rows("users", tt, matrix={"roles": "userroles"})
             w.upsert_rows("addresses", addresses)
-
-        if "roles" in user.DataRow.__slots__ or "roles_add" in user.DataRow.__slots__:
-            adds = "roles" if "roles" in user.DataRow.__slots__ else "roles_add"
-            add_list = getattr(user.rows[0], adds)
-            if add_list:
-                api.sql_void(
-                    conn, insroles, {"un": tt.rows[0].username, "roles": add_list}
-                )
-        if "roles_del" in user.DataRow.__slots__:
-            if not update_existing:
-                raise api.UserError(
-                    "invalid-parameter", "Only allow role deletion on PUT variant"
-                )
-            if user.rows[0].roles_del:
-                api.sql_void(
-                    conn, delroles, {"uid": userid, "roles": user.rows[0].roles_del}
-                )
 
         conn.commit()
     return api.Results().json_out()
@@ -203,7 +176,9 @@ select users.id, users.username, full_name, descr,
     pinhash is not null as has_pin,
     null as password,
     null as pin,
-    (select array_agg(userroles.roleid::text) from userroles where userroles.userid=%(uid)s) as roles
+    (
+        select array_agg(userroles.roleid::text) from userroles where userroles.userid=users.id
+    ) as roles
 from users
 where users.id=%(uid)s
 """
@@ -259,7 +234,7 @@ where devicetokens.userid=%(uid)s and devicetokens.expires>current_timestamp-int
             has_pin=api.cgen.auto(skip_write=True),
             password=api.cgen.auto(),
             pin=api.cgen.auto(skip_write=userid != None),
-            roles=api.cgen.stringlist(hidden=True),
+            roles=api.cgen.matrix(),
         )
         cols, rows = api.sql_tab2(conn, select, {"uid": userid}, cm)
 
@@ -283,6 +258,17 @@ where devicetokens.userid=%(uid)s and devicetokens.expires>current_timestamp-int
             ),
         )
         results.tables["roles"] = api.sql_tab2(conn, selectroles, {"uid": userid}, cm)
+
+        cm = api.ColumnMap(
+            id=api.cgen.yenot_role.surrogate(),
+            role_name=api.cgen.yenot_role.name(
+                label="Role", url_key="id", represents=True
+            ),
+        )
+        select_role_univ = "select * from roles order by roles.sort"
+        results.tables["roles:universe"] = api.sql_tab2(
+            conn, select_role_univ, None, cm
+        )
 
         cm = api.ColumnMap(
             id=api.cgen.device_token.surrogate(),
