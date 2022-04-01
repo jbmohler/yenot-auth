@@ -887,14 +887,15 @@ def get_api_userroles_by_users(request):
 with users_universe as (
     select unnest(%(users)s)::uuid as userid
 )
-select roles.id, roles.role_name, u2.user_list
+select roles.id, roles.role_name, roles.sort,
+    (
+        select array_agg(userroles.userid::text) as users
+        from userroles 
+        join users_universe on users_universe.userid=userroles.userid
+        where userroles.roleid=roles.id
+    ) as users
 from roles
-left outer join (
-    select roleid, array_agg(userroles.userid::text) as user_list
-    from userroles 
-    join users_universe on users_universe.userid=userroles.userid
-    group by roleid) as u2 on u2.roleid=roles.id
-order by roles.sort
+order by sort
 """
 
     select2 = """
@@ -909,7 +910,11 @@ where users.id in (select userid from users_universe)"""
     with app.dbconn() as conn:
         cm = api.ColumnMap(
             id=api.cgen.yenot_role.surrogate(),
-            role_name=api.cgen.yenot_role.name(url_key="id", represents=True),
+            role_name=api.cgen.yenot_role.name(
+                url_key="id", represents=True, skip_write=True
+            ),
+            sort=api.cgen.auto(skip_write=True),
+            users=api.cgen.matrix(),
         )
 
         p = {"users": users}
@@ -920,43 +925,14 @@ where users.id in (select userid from users_universe)"""
 
 @app.put("/api/userroles/by-users", name="put_api_userroles_by_users")
 def put_userroles_by_users(request):
-    # Table userroles:
-    # - id: roleid
-    # - user_list: list of user id's to associate with this role
-    coll = api.table_from_tab2("userroles", required=["id", "user_list"])
+    coll = api.table_from_tab2("roles", required=["id", "users"], matrix=["users"])
     # comma delimited list of user ids
     users = request.params.get("users").split(",")
     users = list(users)
 
-    insert = """
--- insert role--user links for all users in universe not yet linked to role.
-with users_add as (
-    select * from (select unnest(%(users)s::uuid[]) as userid) as f
-    where f.userid = any(%(tolink)s::uuid[])
-), toinsert as (
-    select %(id)s::uuid, users_add.userid
-    from users_add
-    left outer join userroles on userroles.roleid=%(id)s and userroles.userid=users_add.userid
-    where userroles.userid is null
-)
-insert into userroles (roleid, userid)
-(select * from toinsert)"""
-
-    delete = """
--- insert role--user links for all users in universe not yet linked to role.
-with users_del as (
-    select * from (select unnest(%(users)s::uuid[]) as userid) as f
-    where f.userid <> all(%(tolink)s::uuid[])
-)
-delete from userroles where userroles.roleid=%(id)s and 
-                            userroles.userid in (select userid from users_del)"""
-
     with app.dbconn() as conn:
-        for row in coll.rows:
-            params = {"users": users, "tolink": list(row.user_list), "id": row.id}
-
-            api.sql_void(conn, insert, params)
-            api.sql_void(conn, delete, params)
+        with api.writeblock(conn) as w:
+            w.update_rows("roles", coll, matrix={"users": "userroles"})
         conn.commit()
 
     return api.Results().json_out()
@@ -972,13 +948,14 @@ def get_api_userroles_by_roles(request):
 with roles_universe as (
     select unnest(%(roles)s::uuid[]) as roleid
 )
-select users.id, users.username, u2.role_list
+select users.id, users.username,
+    (
+        select array_agg(userroles.roleid::text)
+        from userroles
+        join roles_universe on roles_universe.roleid=userroles.roleid
+        where userroles.userid=users.id
+    ) as roles
 from users
-left outer join (
-    select userid, array_agg(userroles.roleid::text) as role_list
-    from userroles 
-    join roles_universe on roles_universe.roleid=userroles.roleid
-    group by userid) as u2 on u2.userid=users.id
 where not users.inactive
 order by users.username
 """
@@ -996,54 +973,28 @@ where roles.id in (select roleid from roles_universe)"""
     with app.dbconn() as conn:
         cm = api.ColumnMap(
             id=api.cgen.yenot_user.surrogate(),
-            username=api.cgen.yenot_user.name(url_key="id", represents=True),
+            username=api.cgen.yenot_user.name(
+                url_key="id", represents=True, skip_write=True
+            ),
+            roles=api.cgen.matrix(),
         )
 
         p = {"roles": roles}
         results.tables["users", True] = api.sql_tab2(conn, select, p, cm)
-        results.tables["rolenames"] = api.sql_tab2(conn, select2, p)
+        results.tables["roles:universe"] = api.sql_tab2(conn, select2, p)
     return results.json_out()
 
 
 @app.put("/api/userroles/by-roles", name="put_api_userroles_by_roles")
 def put_api_userroles_by_roles(request):
-    # Table userroles:
-    # - id: user-id
-    # - role_list: list of role-ids
-    coll = api.table_from_tab2("userroles", required=["id", "role_list"])
+    users = api.table_from_tab2("users", required=["id", "roles"], matrix=["roles"])
     # comma delimited list of role ids
     roles = request.params.get("roles").split(",")
     roles = list(roles)
 
-    insert = """
--- insert role--user links for all roles in universe not yet linked to role.
-with roles_add as (
-    select f.roleid from (select unnest(%(roles)s::uuid[]) as roleid) as f
-    where f.roleid = any(%(tolink)s::uuid[])
-), toinsert as (
-    select %(id)s::uuid, roles_add.roleid
-    from roles_add
-    left outer join userroles on userroles.userid=%(id)s and userroles.roleid=roles_add.roleid
-    where userroles.roleid is null
-)
-insert into userroles (userid, roleid)
-(select * from toinsert)"""
-
-    delete = """
--- insert role--user links for all roles in universe not yet linked to role.
-with roles_del as (
-    select * from (select unnest(%(roles)s::uuid[]) as roleid) as f
-    where f.roleid <> all(%(tolink)s::uuid[])
-)
-delete from userroles where userroles.userid=%(id)s::uuid and 
-                            userroles.roleid in (select roleid from roles_del)"""
-
     with app.dbconn() as conn:
-        for row in coll.rows:
-            params = {"roles": roles, "tolink": list(row.role_list), "id": row.id}
-
-            api.sql_void(conn, insert, params)
-            api.sql_void(conn, delete, params)
+        with api.writeblock(conn) as w:
+            w.update_rows("users", users, matrix={"roles": "userroles"})
         conn.commit()
 
     return api.Results().json_out()

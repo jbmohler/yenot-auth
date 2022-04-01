@@ -161,15 +161,15 @@ def get_api_user_record_me():
     with app.dbconn() as conn:
         active = api.active_user(conn)
 
-    return _get_api_user_record(active.id)
+    return _get_api_user_record(active.id, admin=False)
 
 
 @app.get("/api/user/<userid>", name="get_api_user_record")
 def get_api_user_record(userid):
-    return _get_api_user_record(userid if userid != "new" else None)
+    return _get_api_user_record(userid if userid != "new" else None, admin=True)
 
 
-def _get_api_user_record(userid):
+def _get_api_user_record(userid, admin):
     select = """
 select users.id, users.username, full_name, descr,
     inactive,
@@ -259,16 +259,17 @@ where devicetokens.userid=%(uid)s and devicetokens.expires>current_timestamp-int
         )
         results.tables["roles"] = api.sql_tab2(conn, selectroles, {"uid": userid}, cm)
 
-        cm = api.ColumnMap(
-            id=api.cgen.yenot_role.surrogate(),
-            role_name=api.cgen.yenot_role.name(
-                label="Role", url_key="id", represents=True
-            ),
-        )
-        select_role_univ = "select * from roles order by roles.sort"
-        results.tables["roles:universe"] = api.sql_tab2(
-            conn, select_role_univ, None, cm
-        )
+        if admin:
+            cm = api.ColumnMap(
+                id=api.cgen.yenot_role.surrogate(),
+                role_name=api.cgen.yenot_role.name(
+                    label="Role", url_key="id", represents=True
+                ),
+            )
+            select_role_univ = "select * from roles order by roles.sort"
+            results.tables["roles:universe"] = api.sql_tab2(
+                conn, select_role_univ, None, cm
+            )
 
         cm = api.ColumnMap(
             id=api.cgen.device_token.surrogate(),
