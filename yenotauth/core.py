@@ -44,7 +44,7 @@ def generate_pin6():
     # a 6 digit pin has just under 20 bits of randomness, 3
     # bytes has 24
     gen1 = os.urandom(3)
-    gen2 = [256 ** i * b for i, b in enumerate(gen1)]
+    gen2 = [256**i * b for i, b in enumerate(gen1)]
     gen3 = gen2[0] * gen2[1] * gen2[2]
     return f"{gen3:06}"[-6:]
 
