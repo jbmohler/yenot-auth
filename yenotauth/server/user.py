@@ -210,8 +210,8 @@ where sessions.userid=%(uid)s and sessions.expires>current_timestamp-interval '3
 
     selectdev = """
 select
-    devicetokens.id, devicetokens.device_name,
-    devicetokens.inactive,
+    devicetokens.id,
+    devicetokens.inactive, devicetokens.device_name,
     devicetokens.issued, devicetokens.expires,
     devicetokens.expires<current_timestamp as expired,
     x.last_session_expires
@@ -279,7 +279,11 @@ where devicetokens.userid=%(uid)s and devicetokens.expires>current_timestamp-int
             conn, selectdev, {"uid": userid}, cm
         )
 
-        cm = api.ColumnMap()
+        cm = api.ColumnMap(
+            id=api.cgen.user_session.surrogate(),
+            ipaddress=api.cgen.auto(label="IP Address"),
+            pin_2fa=api.cgen.auto(hidden=True),
+        )
         results.tables["sessions"] = api.sql_tab2(conn, selectsess, {"uid": userid}, cm)
     return results.json_out()
 
