@@ -3,7 +3,7 @@ import requests
 import yenot.backend
 import yenot.backend.api as api
 
-SELECT_UNUSED_DEVICE_TOKENS = """
+DELETE_UNUSED_DEVICE_TOKENS = """
 with dt_delete_queue as (
     select
         devicetokens.id, devicetokens.userid, devicetokens.device_name,
@@ -11,8 +11,11 @@ with dt_delete_queue as (
         devicetokens.inactive,
         x.last_session_expires,
         case
-            when devicetokens.inactive then true
+            -- delete token when inactive & unused
+            when devicetokens.inactive and x.last_session_expires is null then true
+            -- delete token after all sessions have been cleared (see query below) and expired
             when devicetokens.expires < current_timestamp - interval '15 days' then true
+            -- delete token when unused for 60 days
             when coalesce(x.last_session_expires, devicetokens.issued) < current_timestamp - interval '60 days' then true
             else false end as to_delete
     from devicetokens
@@ -30,7 +33,7 @@ returning *;
 """
 
 
-SELECT_OLD_SESSIONS = """
+DELETE_OLD_SESSIONS = """
 delete
 from sessions
 where expires < current_timestamp - interval '14 days'
@@ -41,10 +44,10 @@ returning *
 def main():
     conn = yenot.backend.create_connection(os.environ["LMS_PROD_DB"])
 
-    rows = api.sql_rows(conn, SELECT_OLD_SESSIONS)
+    rows = api.sql_rows(conn, DELETE_OLD_SESSIONS)
     print(f"Removed {len(rows)} stale sessions.")
 
-    rows = api.sql_rows(conn, SELECT_UNUSED_DEVICE_TOKENS)
+    rows = api.sql_rows(conn, DELETE_UNUSED_DEVICE_TOKENS)
     print(f"Removed {len(rows)} stale device tokens.")
 
     conn.commit()
