@@ -156,7 +156,7 @@ returning sessions.id, sessions.refresh_hash, sessions.userid
             "select username from users where id=%(uid)s",
             {"uid": userid},
         )
-        results.keys["capabilities"] = api.sql_tab2(
+        results.tables["capabilities"] = api.sql_tab2(
             conn, CAPS_SELECT, {"sid": session_id}
         )
 
@@ -314,6 +314,24 @@ where id=%(sid)s and not inactive
 
         generate_session_cookies(conn, results, sessrow=sessrow)
         conn.commit()
+
+    return results.json_out()
+
+
+@app.get("/api/session/check", name="api_session_check")
+def api_session_check(request):
+    session = yenotauth.core.request_session_id()
+
+    results = api.Results()
+    with app.dbconn() as conn:
+        active = api.active_user(conn)
+
+        results.keys["userid"] = active.id
+        results.keys["username"] = active.username
+        results.tables["capabilities"] = api.sql_tab2(
+            conn, CAPS_SELECT, {"sid": session}
+        )
+        results.keys["access_expiration"] = active.expires.timestamp()
 
     return results.json_out()
 

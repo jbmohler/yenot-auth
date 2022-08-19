@@ -125,7 +125,7 @@ def request_user_id(conn):
 
 def active_user(conn):
     select = """
-select users.id, users.username
+select users.id, users.username, sessions.expires
 from sessions
 join users on users.id=sessions.userid
 where sessions.id=%(sid)s
