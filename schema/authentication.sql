@@ -7,6 +7,8 @@ drop table if exists activities cascade;
 drop table if exists sessions cascade;
 drop table if exists userroles cascade;
 drop table if exists roleactivities cascade;
+drop table if exists owners cascade;
+drop table if exists userowners cascade;
 
 create table controls (
   data_name varchar(50)
@@ -38,7 +40,7 @@ create table addresses (
 
 create table roles (
   id uuid primary key default uuid_generate_v1mc(),
-  role_name character varying(40) unique,
+  role_name character varying(40) not null unique,
   sort integer
 );
 
@@ -86,3 +88,19 @@ create table roleactivities (
   dashprompts text, -- want it to be json
   constraint roleactivities_pkey primary key (roleid, activityid)
 );
+
+create table owners (
+  id uuid primary key default uuid_generate_v1mc(),
+  owner_name character varying(40) not null unique,
+);
+
+create table userowners (
+  ownerid uuid not null references owners(id),
+  userid uuid not null references users(id),
+  is_user_default boolean not null default true,
+  is_readonly boolean not null default false,
+  constraint userowners_pkey primary key (ownerid, userid)
+);
+
+create index userowners_user_default_idx on userowners(userid)
+where is_user_default;
