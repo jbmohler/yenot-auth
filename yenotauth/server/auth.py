@@ -37,11 +37,15 @@ def generate_session_cookies(
     assert create_new_session or sessrow
     assert not create_new_session or not sessrow
 
+    assert userid or sessrow.userid
+
     # generate and write session
     if create_new_session:
         session_id = uuid.uuid4().hex
     else:
         session_id = str(sessrow.id)
+        if not userid:
+            userid = sessrow.userid
 
     if new_session_2fa:
         refresh_pwd = None
@@ -143,6 +147,7 @@ returning sessions.id, sessions.refresh_hash, sessions.userid
             "select username from users where id=%(uid)s",
             {"uid": userid},
         )
+        results.keys["access_expiration"] = expires
         results.tables["capabilities"] = api.sql_tab2(
             conn, CAPS_SELECT, {"sid": session_id}
         )
@@ -270,7 +275,7 @@ def api_session_refresh(request):
     refresh_pwd = claims["yenot-refresh-id"]
 
     select = """
-select id, refresh_hash
+select id, refresh_hash, userid
 from sessions
 where id=%(sid)s and not inactive
 """
