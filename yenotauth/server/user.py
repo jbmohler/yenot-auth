@@ -1,11 +1,13 @@
 import json
 import uuid
+import random
 import bcrypt
 import psycopg2.extras
 import rtlib
 import yenot.backend.api as api
 import yenotauth.core
 from . import messaging
+from . import avatars
 
 app = api.get_global_app()
 
@@ -81,6 +83,7 @@ def post_api_user(request, userid=None):
             "pin",
             "inactive",
             "descr",
+            "avatar",
             "roles",
         ],
         matrix=["roles"],
@@ -118,6 +121,10 @@ def post_api_user(request, userid=None):
         addr.userid = userid
 
     with app.dbconn() as conn:
+        is_new = not update_existing or 0 == api.sql_1row(
+            conn, "select count(*) from users where id=%(uid)s", {"uid": userid}
+        )
+
         columns = []
         for c in user.DataRow.__slots__:
             if c == "password":
@@ -126,6 +133,8 @@ def post_api_user(request, userid=None):
                 columns.append("pinhash")
             else:
                 columns.append(c)
+        if is_new:
+            columns.append("avatar")
 
         tt = rtlib.simple_table(columns)
         # TODO: in-elegant table transformation code for matrix columns
@@ -147,6 +156,14 @@ def post_api_user(request, userid=None):
                         r2.username = row.username.upper()
                     else:
                         setattr(r2, c, getattr(row, c))
+                if is_new:
+                    colorset = random.choice(avatars.COLORS)
+                    source = getattr(row, "username")
+                    if getattr(row, "full_name"):
+                        source = "".join([x[0] for x in row.full_name.split(" ")])
+                    initials = (source[0] + source[-1]).upper()
+                    print(f"creating an avatar with initials {initials}")
+                    r2.avatar = avatars.construct_avatar(initials, *colorset)
 
         with api.writeblock(conn) as w:
             w.upsert_rows("users", tt, matrix={"roles": "userroles"})
@@ -162,6 +179,21 @@ def get_api_user_record_me():
         active = api.active_user(conn)
 
     return _get_api_user_record(active.id, admin=False)
+
+
+@app.get("/api/user/me/avatar.png", name="get_api_user_me_avatar")
+def get_api_user_me_avatar(response):
+    with app.dbconn() as conn:
+        active = api.active_user(conn)
+
+        avatar_bytes = api.sql_1row(
+            conn, "select avatar from users where id=%(uid)s", {"uid": active.id}
+        )
+        if avatar_bytes:
+            avatar_bytes = bytes(avatar_bytes)
+
+    response.content_type = "image/png"
+    return avatar_bytes
 
 
 @app.get("/api/user/<userid>", name="get_api_user_record")

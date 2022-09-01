@@ -22,6 +22,7 @@ create table users (
   pinhash varchar(60) CHECK (pinhash ~ '^[\x21-\x7F]*$'),
   full_name text,
   descr text,
+  avatar bytea,
   inactive boolean not null default false
 );
 

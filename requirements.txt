@@ -1,4 +1,5 @@
 bcrypt
+pillow
 python-jose
 twilio
 yenot
