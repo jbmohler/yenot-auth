@@ -49,6 +49,7 @@ SYS_ADMIN_ACTS = [
     "api_users_by_role",
     "put_api_user",
     "post_api_user",
+    "put_api_user_send_invite",
     "get_api_userroles_by_users",
     "put_api_userroles_by_users",
     "get_api_userroles_by_roles",

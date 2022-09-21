@@ -41,9 +41,9 @@ def generate_session_cookies(
 
     # generate and write session
     if create_new_session:
-        session_id = uuid.uuid4().hex
+        session_id = str(uuid.uuid4())
     else:
-        session_id = str(sessrow.id)
+        session_id = sessrow.id
         if not userid:
             userid = sessrow.userid
 
@@ -457,9 +457,19 @@ limit 1
 
     results = api.Results()
     with app.dbconn() as conn:
-        target = api.sql_1row(conn, select, {"uid": userid})
+        target = api.sql_1object(conn, select, {"uid": userid})
 
-        # TODO:  I feel like I should validate the user, but the appearance of an address does so?
+        if not target:
+            raise api.UserError(
+                "unknown-record",
+                "This user has no addresses configured to receive the invite.",
+            )
+
+        user = api.sql_1object(
+            conn,
+            "select username, full_name from users where id=%(uid)s",
+            {"uid": userid},
+        )
 
         session_id = generate_session_cookies(
             conn,
@@ -469,9 +479,65 @@ limit 1
             userid=userid,
         )
 
-        token = results.keys["invite_token"]
-        messaging.communicate_invite(target, session_id, request, token)
+        conn.commit()
 
+        token = results.keys["invite_token"]
+        messaging.communicate_invite(target, userid, request, token, user)
+
+        results.keys["destination"] = target.address
+
+    return results.json_out()
+
+
+@app.put(
+    "/api/user/<userid>/accept-invite",
+    name="put_api_user_accept_invite",
+    skip=["yenot-auth"],
+)
+def put_api_user_accept_invite(request, userid):
+    token = request.forms.get("token")
+    if token is None:
+        raise api.ForbiddenError(
+            "unknown-token", "No authenticated session to refresh."
+        )
+    claims = yenotauth.core.verify_jwt_exception(token, "invite")
+
+    password = request.forms.get("password")
+
+    select_session = """
+select sessions.id, users.id as userid, users.username, sessions.expires
+from sessions
+join users on users.id=sessions.userid
+where sessions.id=%(sid)s
+"""
+
+    update = """
+update users set pwhash=%(h)s where id=%(i)s"""
+
+    with app.dbconn() as conn:
+        session = api.sql_1object(
+            conn, select_session, {"sid": claims["yenot-session-id"]}
+        )
+
+        if not session:
+            raise api.ForbiddenError(
+                "unknown-token",
+                "This invite token cannot be found.  Ask for a new invite from the system administrator.",
+            )
+
+        if userid != session.userid:
+            raise api.ForbiddenError("unknown-token", "Token does not match this user.")
+
+        hashed = bcrypt.hashpw(password.encode("utf8"), bcrypt.gensalt())
+        hashed = hashed.decode("ascii")
+
+        api.sql_void(conn, update, {"h": hashed, "i": userid})
+        api.sql_void(
+            conn,
+            "update sessions set inactive=false where id=%(sid)s",
+            {"sid": claims["sub"]},
+        )
+        conn.commit()
     return api.Results().json_out()
 
 

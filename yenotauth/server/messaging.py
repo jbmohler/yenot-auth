@@ -21,17 +21,21 @@ def communicate_2fa(target, session_id, pin6):
     _internal_communicate(target, filebase, pin6, subject, longbody, shortbody)
 
 
-def communicate_invite(target, userid, request, token):
+def communicate_invite(target, userid, request, token, user):
     if target.addr_type != "email":
         raise RuntimeError(
             "Can only accept an invite from an e-mail with a complicated URL."
         )
 
     base = request.environ["YENOT_BASE_URL"]
-    url = f"{base}/api/user/{userid}/accept-invite?token={token}"
+    base = base.rstrip("/")
+
+    default = "{base}/api/user/{userid}/accept-invite?token={token}"
+    template = os.getenv("YENOT_ACCEPT_INVITE_URL", default)
+    url = template.format(base=base, userid=userid, token=token)
 
     shortbody = None
-    longbody = f"You are invited to join this awesome organization.  Click {url} to complete your account sign-up & set up 2FA devices."
+    longbody = f"Dear {user.full_name},\n\nYou are invited to join this awesome organization.  Click the URL below to complete your account sign-up & set up 2FA devices.  Your username after setting your password is {user.username}.\n\n{url}"
     subject = "Account Invite"
 
     filebase = f"acceptinvite--{userid}"
