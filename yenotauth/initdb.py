@@ -19,6 +19,7 @@ USER_ACTS = [
     "delete_api_user_me_address",
     "get_api_user_me_avatar",
     "post_api_user_me_device_token_new",
+    "delete_api_user_me_device_token",
     "api_session_check",
     "api_session_logout",
     "api_user_reports",
