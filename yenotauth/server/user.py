@@ -110,7 +110,7 @@ def post_api_user(request, userid=None):
             row.id = userid
 
     for addr in addresses.rows:
-        if getattr(addr, "userid") is None and userid is None:
+        if getattr(addr, "userid", None) is None and userid is None:
             raise api.UserError(
                 "invalid-input",
                 "If userid is not specified in URL then no addresses can be upserted",
